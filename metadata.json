@@ -1,0 +1,8 @@
+{
+  "name": "SynthUser AI",
+  "description": "AI-powered synthetic user research platform for simulating user interviews and focus groups.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
