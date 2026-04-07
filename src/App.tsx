@@ -9,83 +9,8 @@ import {
 } from 'lucide-react';
 import { cn } from './lib/utils';
 import { Project, SyntheticUser, Message, Conversation, KnowledgeDoc } from './types';
-
-// =====================================================================
-// 🌟🌟🌟 新增：替换原 Google Gemini 逻辑，全面接入硅基流动 🌟🌟🌟
-// =====================================================================
-const callAI = async (messages: any[], requireJson = false) => {
-  const res = await fetch('/api/ai', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ messages })
-  });
-  const data = await res.json();
-  if (data.error) throw new Error(data.error);
-  
-  let text = data.result;
-  if (requireJson) {
-    try {
-      const match = text.match(/```(?:json)?\n([\s\S]*?)\n```/);
-      const jsonStr = match ? match[1] : text.replace(/```json/g, '').replace(/```/g, '').trim();
-      return JSON.parse(jsonStr);
-    } catch (e) {
-      console.error("JSON 解析失败:", text);
-      throw new Error("AI 返回的数据格式不正确，请重试");
-    }
-  }
-  return text;
-};
-
-export const decomposeGoals = async (purpose: string) => {
-  const prompt = `你是一个资深的用户体验研究员。请根据用户的【研究目的】，拆解出3个具体的研究目标，起一个项目简称，并推荐2个用于区分用户群体的【核心变量】（如动机、决策风格等）。
-  研究目的：${purpose}
-  必须且只能返回如下合法JSON格式的数据（不要输出任何其他解释文字）：
-  {
-    "shortTitle": "项目简称（10字以内）",
-    "goals": [{"id": "g1", "content": "目标描述"}],
-    "suggestedDimensions": [{"id": "motivation", "name": "动机偏好", "desc": "解释说明"}]
-  }`;
-  return await callAI([{ role: 'user', content: prompt }], true);
-};
-
-export const generateSyntheticUsers = async (projectId: string, purpose: string, goals: any[], config: any, knowledgeBase: any[]) => {
-  const prompt = `你是一个用户生成器。根据以下研究背景，生成 ${config.userCount} 个虚拟的访谈用户。
-  研究目的：${purpose}
-  必须且只能返回一个合法的JSON数组，格式如下（不要输出任何其他文字）：
-  [
-    {
-      "name": "张三",
-      "age": 28,
-      "occupation": "产品经理",
-      "coreTraits": { "motivation": { "label": "效率至上", "detail": "非常看重时间成本" } },
-      "personality_traits": ["理性", "急躁"]
-    }
-  ]`;
-  return await callAI([{ role: 'user', content: prompt }], true);
-};
-
-export const chatWithUser = async (participant: any, history: any[], input: string, project: any, knowledgeBase: any[], image: any) => {
-  const messages = [
-    { role: 'system', content: `你是参与访谈的真实用户。你的设定：姓名${participant.name}，职业${participant.occupation}，年龄${participant.age}岁。特点：${participant.personality_traits?.join(',')}。请完全沉浸在这个角色中回答我的问题，绝对不要说自己是AI。` },
-    ...history.map((m: any) => ({ role: m.senderType === 'user' ? 'user' : 'assistant', content: m.content })),
-    { role: 'user', content: input }
-  ];
-  return await callAI(messages, false);
-};
-
-export const generateReport = async (project: any, users: any[], messages: any[]) => {
-  const prompt = `你是一个研究员。请分析这组访谈记录，生成研究报告。研究目的：${project.purpose}。
-  必须且只能返回合法的JSON格式（不要输出任何其他文字）：
-  {
-    "summary": "一句话总结摘要",
-    "insights": [{"category": "体验洞察", "content": "洞察内容", "evidence": "用户原话"}],
-    "painPoints": [{"description": "痛点描述", "severity": "high", "frequency": "高", "userQuotes": ["原话"]}],
-    "recommendations": [{"action": "建议行动", "impact": "预期影响", "effort": "中"}]
-  }`;
-  return await callAI([{ role: 'user', content: prompt }], true);
-};
-// =====================================================================
-
+// 👇 这里它会自动去寻找我们上一条消息创建的那个 gemini.ts 桥梁文件！
+import { decomposeGoals, generateSyntheticUsers, chatWithUser, generateReport } from './services/gemini';
 
 // --- Components ---
 const Button = ({ className, variant = 'primary', size = 'md', ...props }: any) => {
@@ -172,6 +97,8 @@ const ProjectNew = ({ onProjectCreated, onBack }: any) => {
   const templates = [
     { title: '招聘AI面试间功能测试', content: '我想要全面测试招聘平台 AI 面试间的功能完整性、操作流畅度与技术稳定性，识别功能缺陷和用户体验痛点，为功能迭代优化提供明确依据。' },
     { title: '黄页流失用户调研', content: '针对近期黄页租赁业务用户流失严重的情况，深入了解租赁流失用户的离开原因和需求变化，识别潜在的改进点和机会。' },
+    { title: '金融会员卡体验优化', content: '目前金融会员卡用户流失率较高，期望通过流失用户调研，深入了解其离开的真实原因，为产品优化和服务提升提供数据支持。' },
+    { title: '租房视频找房功能探索', content: '探索用户对租房平台视频找房功能的认知情况、操作体验、痛点障碍以及改进期望，评估该功能的价值。' },
   ];
 
   const handleDecompose = async () => {
@@ -179,12 +106,12 @@ const ProjectNew = ({ onProjectCreated, onBack }: any) => {
     setLoading(true);
     try {
       const result = await decomposeGoals(purpose);
-      setGoals(result.goals || []);
-      setShortTitle(result.shortTitle || "新项目");
-      setSuggestedDimensions(result.suggestedDimensions || []);
+      setGoals(result.goals);
+      setShortTitle(result.shortTitle);
+      setSuggestedDimensions(result.suggestedDimensions);
       setStep(2);
-    } catch (error:any) {
-      alert(error.message);
+    } catch (error) {
+      console.error(error);
     } finally {
       setLoading(false);
     }
@@ -235,7 +162,7 @@ const ProjectNew = ({ onProjectCreated, onBack }: any) => {
         <div className="space-y-6">
           <div className="space-y-4">
             {goals.map((goal, i) => (
-              <div key={goal.id || i} className="flex gap-4 p-4 bg-white border border-gray-200 rounded-xl items-start">
+              <div key={goal.id} className="flex gap-4 p-4 bg-white border border-gray-200 rounded-xl items-start">
                 <div className="flex-shrink-0 w-8 h-8 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center font-bold text-sm mt-1">{i + 1}</div>
                 <textarea rows={2} className="flex-1 bg-transparent border-none focus:ring-0 p-0 text-gray-900 resize-none leading-relaxed" value={goal.content} onChange={(e) => { const newGoals = [...goals]; newGoals[i].content = e.target.value; setGoals(newGoals); }} />
               </div>
@@ -251,17 +178,63 @@ const ProjectNew = ({ onProjectCreated, onBack }: any) => {
   );
 };
 
+const resizeImage = (base64: string, maxWidth = 1024, maxHeight = 1024): Promise<string> => {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.src = base64;
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      let width = img.width;
+      let height = img.height;
+      if (width > height) {
+        if (width > maxWidth) { height *= maxWidth / width; width = maxWidth; }
+      } else {
+        if (height > maxHeight) { width *= maxHeight / height; height = maxHeight; }
+      }
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx?.drawImage(img, 0, 0, width, height);
+      resolve(canvas.toDataURL('image/jpeg', 0.8));
+    };
+  });
+};
+
 const UserConfig = ({ project, onUsersGenerated, onBack }: any) => {
   const [config, setConfig] = useState({
-    userCount: 2,
-    subjectiveDimensions: project.suggestedDimensions?.map((d: any) => d.id) || ['motivation'],
+    subjectiveDimensions: project.suggestedDimensions?.map((d: any) => d.id) || ['motivation', 'decision_style'],
+    customDimensions: '',
+    selectedObjectiveVariables: [] as string[],
+    userCount: 4,
+    ageRange: { min: 20, max: 40 },
+    genderRatio: 50, 
+    cityTierRange: ['一线', '新一线'],
+    incomeRange: { min: 5000, max: 20000 },
+    educationRange: ['本科'],
+    usageTimeRange: ['1个月', '半年'],
+    usageFrequency: ['每天'],
   });
   const [loading, setLoading] = useState(false);
+  const [customObjective, setCustomObjective] = useState('');
 
   const handleGenerate = async () => {
+    if (config.subjectiveDimensions.length === 0 && !config.customDimensions) {
+      alert('请至少选择或输入一个核心变量');
+      return;
+    }
     setLoading(true);
     try {
-      const generatedUsers = await generateSyntheticUsers(project.id, project.purpose, project.goals, config, []);
+      const kbRes = await fetch('/api/knowledge');
+      const knowledgeBase = await kbRes.json();
+      const finalDimensions = [...config.subjectiveDimensions];
+      if (config.customDimensions) finalDimensions.push(...config.customDimensions.split(',').map(d => d.trim()));
+      
+      const generatedUsers = await generateSyntheticUsers(project.id, project.purpose, project.goals, {
+        ...config,
+        subjectiveDimensions: finalDimensions,
+        customObjectiveVariables: customObjective,
+      }, knowledgeBase);
+
       for (const user of generatedUsers) {
         await fetch('/api/users', {
           method: 'POST',
@@ -277,20 +250,82 @@ const UserConfig = ({ project, onUsersGenerated, onBack }: any) => {
     }
   };
 
+  const objectiveVariables = [
+    { id: 'age', name: '年龄', type: 'range' },
+    { id: 'gender', name: '性别', type: 'ratio' },
+    { id: 'city_tier', name: '城市线级', type: 'multi', options: ['一线', '新一线', '二线', '三线', '四线及以下'] },
+    { id: 'income', name: '月收入', type: 'range' },
+    { id: 'education', name: '学历', type: 'multi', options: ['初中及以下', '高中', '大专', '本科', '硕士及以上'] },
+    { id: 'usage_time', name: '使用时间', type: 'multi', options: ['刚使用', '1个月', '半年', '1年', '3年', '5年及以上'] },
+    { id: 'usage_frequency', name: '使用频率', type: 'multi', options: ['每天', '每周 3-5 次', '每周 1-2 次', '偶尔', '几乎不用'] },
+  ];
+
   return (
     <div className="max-w-5xl mx-auto px-6 py-12">
       <Button variant="ghost" className="mb-8 gap-2" onClick={onBack}><ArrowLeft className="w-4 h-4" />返回项目</Button>
       <div className="mb-12">
         <h2 className="text-3xl font-bold text-gray-900 mb-2">配置合成用户</h2>
-        <p className="text-gray-600">由于选择轻量级模型，已自动精简配置选项，为您快速生成用户。</p>
+        <p className="text-gray-600">核心变量决定用户本质差异，客观变量控制群体分布。</p>
       </div>
-      <div className="max-w-md">
-        <label className="block text-sm font-medium text-gray-700 mb-4">生成用户数量: {config.userCount} (建议测试阶段选 1-2个)</label>
-        <input type="range" min="1" max="4" className="w-full mb-8" value={config.userCount} onChange={e => setConfig({...config, userCount: parseInt(e.target.value)})} />
-        <Button size="lg" className="w-full gap-2" disabled={loading} onClick={handleGenerate}>
-          {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Zap className="w-5 h-5" />}
-          {loading ? 'AI 正在发挥想象力生成用户...' : '开始生成合成用户'}
-        </Button>
+
+      <div className="grid md:grid-cols-2 gap-12">
+        <div className="space-y-8">
+          <div>
+            <h3 className="text-lg font-bold text-gray-900 mb-1 flex items-center gap-2">
+              <BrainCircuit className="w-5 h-5 text-indigo-600" />核心变量（内在心理维度）
+            </h3>
+            <p className="text-xs text-gray-500 mb-4">必选，无需全选。勾选维度为用户核心区分依据。</p>
+            <div className="space-y-3 mb-4">
+              {(project.suggestedDimensions || [
+                { id: 'motivation', name: '动机偏好', desc: '追求效率 vs 追求品质 vs 追求性价比' },
+                { id: 'decision_style', name: '决策风格', desc: '理性分析型 vs 感性直觉型 vs 从众型' },
+                { id: 'values', name: '价值观', desc: '效率至上 vs 品质优先 vs 社交认同' },
+              ]).map((dim: any) => (
+                <label key={dim.id} className="flex items-start gap-3 p-4 border border-gray-200 rounded-xl cursor-pointer hover:bg-gray-50 transition-colors">
+                  <input type="checkbox" className="mt-1 rounded text-indigo-600 focus:ring-indigo-500" checked={config.subjectiveDimensions.includes(dim.id)} onChange={(e) => { const dims = e.target.checked ? [...config.subjectiveDimensions, dim.id] : config.subjectiveDimensions.filter(d => d !== dim.id); setConfig({ ...config, subjectiveDimensions: dims }); }} />
+                  <div><div className="font-bold text-gray-900">{dim.name}</div><div className="text-sm text-gray-500">{dim.desc}</div></div>
+                </label>
+              ))}
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">自定义核心变量 (逗号分隔)</label>
+              <input className="w-full p-3 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" placeholder="例如：价格敏感度, 品牌忠诚度" value={config.customDimensions} onChange={(e) => setConfig({ ...config, customDimensions: e.target.value })} />
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-8">
+          <div>
+            <h3 className="text-lg font-bold text-gray-900 mb-1 flex items-center gap-2"><Settings className="w-5 h-5 text-indigo-600" />客观变量（人口统计特征）</h3>
+            <p className="text-xs text-gray-500 mb-4">非必填。勾选后，用户在选定特征范围内生成。</p>
+            <div className="space-y-4">
+              {objectiveVariables.map((v) => (
+                <div key={v.id} className="p-4 border border-gray-200 rounded-xl">
+                  <div className="flex items-center justify-between mb-4">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" className="rounded text-indigo-600 focus:ring-indigo-500" checked={config.selectedObjectiveVariables.includes(v.id)} onChange={(e) => { const vars = e.target.checked ? [...config.selectedObjectiveVariables, v.id] : config.selectedObjectiveVariables.filter(id => id !== v.id); setConfig({ ...config, selectedObjectiveVariables: vars }); }} />
+                      <span className="font-bold text-gray-900">{v.name}</span>
+                    </label>
+                  </div>
+                  {/* 省略部分详细的客观变量展开代码，保持与原版一致功能即可 */}
+                </div>
+              ))}
+              <div className="p-4 border border-gray-200 rounded-xl bg-gray-50/50">
+                <label className="block text-sm font-bold text-gray-900 mb-2">自定义客观变量</label>
+                <input className="w-full p-2 border border-gray-200 rounded-lg text-sm outline-none focus:ring-2 focus:ring-indigo-500" placeholder="例如：是否为付费会员, 所在行业" value={customObjective} onChange={(e) => setCustomObjective(e.target.value)} />
+              </div>
+            </div>
+          </div>
+
+          <div className="pt-8">
+            <label className="block text-sm font-medium text-gray-700 mb-4">生成用户数量: {config.userCount}</label>
+            <input type="range" min="1" max="6" className="w-full mb-8" value={config.userCount} onChange={e => setConfig({...config, userCount: parseInt(e.target.value)})} />
+            <Button size="lg" className="w-full gap-2" disabled={loading} onClick={handleGenerate}>
+              {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Zap className="w-5 h-5" />}
+              {loading ? '正在检索知识库并生成用户...' : '开始生成合成用户'}
+            </Button>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -304,22 +339,40 @@ const Dashboard = ({ project, users, onChat, onReport, onBack }: any) => {
     <div className="max-w-6xl mx-auto px-6 py-8">
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-6 mb-10 pb-6 border-b border-gray-100">
         <div className="flex-1 min-w-0">
-          <Button variant="ghost" size="sm" className="mb-3 -ml-2 gap-1" onClick={onBack}><ArrowLeft className="w-4 h-4" />返回首页</Button>
-          <h2 className="text-2xl font-bold text-gray-900 mb-1 truncate">{project.shortTitle || project.purpose}</h2>
+          <Button variant="ghost" size="sm" className="mb-3 -ml-2 gap-1 text-gray-500 hover:text-indigo-600" onClick={onBack}><ArrowLeft className="w-4 h-4" />返回首页</Button>
+          <h2 className="text-2xl font-bold text-gray-900 mb-1 truncate" title={project.purpose}>{project.shortTitle || project.purpose}</h2>
+          <p className="text-sm text-gray-500 mb-4">请选择访谈对象，点击上方卡片勾选用户，支持单选或多选。</p>
+          <div className="flex flex-wrap gap-3 items-center"><Badge variant="primary" className="normal-case py-1 px-3">项目 ID: {project.id}</Badge><Badge variant="success" className="normal-case py-1 px-3">已生成 {users.length} 个合成用户</Badge></div>
         </div>
         <div className="flex gap-3 shrink-0">
           <Button variant="primary" disabled={selectedUserIds.length === 0} onClick={() => onChat(selectedUserIds)} className="gap-2 shadow-md">
-            <MessageSquare className="w-4 h-4" />开始访谈
+            <MessageSquare className="w-4 h-4" />{selectedUserIds.length > 1 ? `焦点小组 (${selectedUserIds.length})` : '1V1 深度访谈'}
           </Button>
           <Button variant="secondary" onClick={onReport} className="gap-2"><FileText className="w-4 h-4" />查看报告</Button>
         </div>
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 auto-rows-fr">
         {users.map((user: any) => (
-          <Card key={user.id} className={cn('p-6 cursor-pointer border-2 transition-all', selectedUserIds.includes(user.id) ? 'border-indigo-600 bg-indigo-50/10' : 'border-transparent')} onClick={() => toggleUser(user.id)}>
+          <Card key={user.id} className={cn('p-6 cursor-pointer transition-all border-2 relative group flex flex-col h-full', selectedUserIds.includes(user.id) ? 'border-indigo-600 ring-4 ring-indigo-50 bg-indigo-50/10' : 'border-transparent hover:border-indigo-200 hover:shadow-md')} onClick={() => toggleUser(user.id)}>
+            <div className={cn("absolute top-4 right-4 w-6 h-6 rounded-full flex items-center justify-center border-2 transition-all z-10", selectedUserIds.includes(user.id) ? "bg-indigo-600 border-indigo-600 text-white" : "bg-white border-gray-200 text-transparent group-hover:border-indigo-300")}><CheckCircle2 className="w-4 h-4" /></div>
             <div className="flex items-center gap-4 mb-5">
-              <div className="w-12 h-12 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-xl">{user.name?.[0] || 'U'}</div>
-              <div><h3 className="font-bold text-gray-900">{user.name}</h3><p className="text-xs text-gray-500">{user.occupation} · {user.age}岁</p></div>
+              <div className="w-12 h-12 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-xl shrink-0">{user.name[0]}</div>
+              <div className="min-w-0"><h3 className="font-bold text-gray-900 truncate">{user.name}</h3><p className="text-xs text-gray-500 truncate">{user.occupation} · {user.age}岁</p></div>
+            </div>
+            <div className="flex-1 space-y-4 mb-5">
+              <div className="p-3 bg-gray-50 rounded-xl border border-gray-100">
+                <div className="text-[10px] font-bold text-gray-400 uppercase mb-2 tracking-wider">核心变量 (本质差异)</div>
+                {Object.entries(user.coreTraits || {}).map(([key, trait]: any) => (
+                  <div key={key} className="mb-2 last:mb-0">
+                    <div className="text-xs font-bold text-indigo-600">{key}: {trait.label}</div>
+                    <div className="text-[11px] text-gray-600 leading-relaxed mt-0.5 line-clamp-2">{trait.detail}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {user.personality_traits?.slice(0, 3).map((trait: string) => <Badge key={trait} className="bg-white border border-gray-100">{trait}</Badge>)}
             </div>
           </Card>
         ))}
@@ -332,26 +385,52 @@ const Chat = ({ project, users, participantIds, onBack, onGenerateReport }: any)
   const [messages, setMessages] = useState<any[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [selectedImage, setSelectedImage] = useState<{ data: string; mimeType: string } | null>(null);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+
   const participants = users.filter((u: any) => participantIds.includes(u.id));
+  const isFocusGroup = participantIds.length > 1;
+
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const base64 = event.target?.result as string;
+      const resizedBase64 = await resizeImage(base64);
+      const data = resizedBase64.split(',')[1];
+      setSelectedImage({ data, mimeType: 'image/jpeg' });
+    };
+    reader.readAsDataURL(file);
+  };
 
   const handleSend = async () => {
-    if (!input.trim() || loading) return;
-    const userMsg = { senderType: 'user', content: input, id: Date.now().toString() };
+    if ((!input.trim() && !selectedImage) || loading) return;
+    const userMsg = {
+      id: Date.now().toString(),
+      senderType: 'user',
+      content: input,
+      imageUrl: selectedImage ? `data:${selectedImage.mimeType};base64,${selectedImage.data}` : undefined,
+      mimeType: selectedImage?.mimeType,
+    };
     const updatedMessages = [...messages, userMsg];
     setMessages(updatedMessages);
     setInput('');
+    const currentImage = selectedImage;
+    setSelectedImage(null);
     setLoading(true);
 
     try {
+      let currentHistory = updatedMessages;
       for (const participant of participants) {
-        const aiResponse = await chatWithUser(participant, updatedMessages, input, project, [], null);
-        const aiMsg = { senderType: 'synthetic_user', syntheticUserId: participant.id, content: aiResponse, id: Date.now().toString() };
-        updatedMessages.push(aiMsg);
-        setMessages([...updatedMessages]);
-        break; // 简化：单人聊天测试
+        const aiResponse = await chatWithUser(participant, currentHistory, input, project, [], currentImage || undefined);
+        const aiMsg = { id: Date.now().toString(), senderType: 'synthetic_user', syntheticUserId: participant.id, content: aiResponse };
+        currentHistory = [...currentHistory, aiMsg];
+        setMessages(currentHistory);
+        if (!isFocusGroup) break;
       }
-    } catch (error:any) {
-      alert(error.message);
+    } catch (error) {
+      console.error(error);
     } finally {
       setLoading(false);
     }
@@ -359,39 +438,91 @@ const Chat = ({ project, users, participantIds, onBack, onGenerateReport }: any)
 
   return (
     <div className="h-screen flex flex-col bg-gray-50">
-      <header className="bg-white border-b px-6 py-4 flex justify-between items-center"><Button variant="ghost" onClick={onBack}><ArrowLeft className="w-5 h-5" /></Button><Button variant="primary" onClick={() => onGenerateReport(messages)}>生成报告</Button></header>
+      <header className="bg-white border-b border-gray-200 px-6 py-4 flex justify-between items-center shrink-0">
+        <div className="flex items-center gap-4">
+          <Button variant="ghost" size="icon" onClick={onBack}><ArrowLeft className="w-5 h-5" /></Button>
+          <div><h2 className="font-bold text-gray-900">{isFocusGroup ? '焦点小组讨论' : `与 ${participants[0]?.name || 'AI用户'} 的深度访谈`}</h2></div>
+        </div>
+        <Button variant="primary" size="sm" onClick={() => onGenerateReport(messages)}>生成研究报告</Button>
+      </header>
       <div className="flex-1 overflow-y-auto p-6 space-y-6">
         <div className="max-w-4xl mx-auto space-y-6">
-          {messages.map((msg) => (
-            <div key={msg.id} className={cn('flex gap-4', msg.senderType === 'user' ? 'flex-row-reverse' : 'flex-row')}>
-              <div className={cn('max-w-[80%] p-4 rounded-2xl', msg.senderType === 'user' ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-white border rounded-tl-none')}>{msg.content}</div>
-            </div>
-          ))}
-          {loading && <div><Loader2 className="w-5 h-5 animate-spin text-indigo-600" /></div>}
+          {messages.map((msg) => {
+            const isUser = msg.senderType === 'user';
+            const participant = participants.find((p: any) => p.id === msg.syntheticUserId);
+            return (
+              <div key={msg.id} className={cn('flex gap-4', isUser ? 'flex-row-reverse' : 'flex-row')}>
+                {!isUser && <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold shrink-0">{participant?.name[0] || 'A'}</div>}
+                <div className={cn('max-w-[80%] p-4 rounded-2xl shadow-sm', isUser ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-white text-gray-800 border border-gray-200 rounded-tl-none')}>
+                  {!isUser && isFocusGroup && <div className="text-[10px] font-bold text-indigo-600 uppercase mb-1">{participant?.name}</div>}
+                  {msg.imageUrl && <img src={msg.imageUrl} alt="Uploaded" className="max-w-full rounded-lg mb-2 border border-white/20" referrerPolicy="no-referrer" />}
+                  <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                </div>
+              </div>
+            );
+          })}
+          {loading && <div className="flex gap-4"><div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center text-gray-400 shrink-0"><Bot className="w-5 h-5 animate-pulse" /></div><div className="bg-white border border-gray-200 p-4 rounded-2xl rounded-tl-none shadow-sm"><Loader2 className="w-4 h-4 animate-spin text-gray-400" /></div></div>}
         </div>
       </div>
-      <div className="bg-white border-t p-6"><div className="flex gap-4 max-w-4xl mx-auto"><input className="flex-1 border rounded-xl px-4 py-2" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSend()} /><Button onClick={handleSend}><Send className="w-5 h-5" /></Button></div></div>
+      <div className="bg-white border-t border-gray-200 p-6 shrink-0">
+        <div className="max-w-4xl mx-auto">
+          {selectedImage && (
+            <div className="mb-4 relative inline-block">
+              <img src={`data:${selectedImage.mimeType};base64,${selectedImage.data}`} alt="Preview" className="h-20 w-20 object-cover rounded-lg border-2 border-indigo-500" />
+              <button onClick={() => setSelectedImage(null)} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 shadow-lg hover:bg-red-600 transition-colors"><Trash2 className="w-3 h-3" /></button>
+            </div>
+          )}
+          <div className="flex gap-4">
+            <input type="file" ref={fileInputRef} className="hidden" accept="image/*" onChange={handleImageUpload} />
+            <Button variant="ghost" size="icon" className="shrink-0" onClick={() => fileInputRef.current?.click()}><ImageIcon className="w-5 h-5" /></Button>
+            <input className="flex-1 bg-gray-50 border border-gray-200 rounded-xl px-4 py-2 outline-none focus:ring-2 focus:ring-indigo-500 transition-all" placeholder={selectedImage ? "描述图片或提问..." : "输入您的问题..."} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSend()} />
+            <Button size="icon" disabled={loading || (!input.trim() && !selectedImage)} onClick={handleSend}><Send className="w-5 h-5" /></Button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 };
 
-const Knowledge = ({ onBack }: any) => (
-  <div className="p-12 text-center"><h2 className="text-2xl font-bold mb-4">知识库功能维护中</h2><Button onClick={onBack}>返回</Button></div>
-);
+const Knowledge = ({ onBack }: any) => {
+  return (
+    <div className="max-w-6xl mx-auto px-6 py-12">
+      <div className="flex justify-between items-center mb-12">
+        <div><Button variant="ghost" className="mb-4 gap-2" onClick={onBack}><ArrowLeft className="w-4 h-4" />返回首页</Button><h2 className="text-3xl font-bold text-gray-900 mb-2">知识库管理</h2></div>
+      </div>
+      <div className="py-20 flex justify-center text-gray-500">知识库功能正在维护中...</div>
+    </div>
+  );
+};
 
 const Report = ({ project, users, messages, onBack }: any) => {
   const [report, setReport] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
   useEffect(() => {
-    generateReport(project, users, messages).then(setReport).catch(e => alert(e.message));
+    generateReport(project, users, messages).then(setReport).catch(e => console.error(e)).finally(() => setLoading(false));
   }, []);
 
-  if (!report) return <div className="p-12 text-center"><Loader2 className="w-8 h-8 animate-spin mx-auto text-indigo-600" /></div>;
+  if (loading || !report) return <div className="h-screen flex flex-col items-center justify-center bg-gray-50"><Loader2 className="w-12 h-12 animate-spin text-indigo-600 mb-4" /><h2 className="text-xl font-bold text-gray-900">正在通过 AI 深度分析...</h2></div>;
 
   return (
-    <div className="max-w-4xl mx-auto p-12">
-      <Button variant="ghost" className="mb-8" onClick={onBack}><ArrowLeft className="w-4 h-4 mr-2" />返回</Button>
-      <h2 className="text-3xl font-bold mb-8">研究报告</h2>
-      <Card className="p-6 bg-indigo-50 mb-8"><p className="italic">{report.summary}</p></Card>
+    <div className="max-w-4xl mx-auto px-6 py-12">
+      <div className="flex justify-between items-center mb-12">
+        <div><Button variant="ghost" className="mb-4 gap-2" onClick={onBack}><ArrowLeft className="w-4 h-4" />返回对话</Button><h2 className="text-3xl font-bold text-gray-900 mb-2">研究报告</h2></div>
+      </div>
+      <div className="space-y-10">
+        <section><h3 className="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2"><Target className="w-5 h-5 text-indigo-600" />整体摘要</h3><Card className="p-6 bg-indigo-50 border-indigo-100"><p className="text-gray-800 leading-relaxed italic">"{report.summary}"</p></Card></section>
+        <section><h3 className="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2"><Lightbulb className="w-5 h-5 text-indigo-600" />关键洞察</h3>
+          <div className="space-y-4">{report.insights?.map((insight: any, i: number) => (
+            <Card key={i} className="p-6"><Badge variant="primary" className="mb-3">{insight.category}</Badge><p className="text-gray-900 font-medium mb-4">{insight.content}</p><div className="bg-gray-50 p-4 rounded-lg border-l-4 border-indigo-500"><p className="text-sm text-gray-600 italic">"{insight.evidence}"</p></div></Card>
+          ))}</div>
+        </section>
+        <section><h3 className="text-xl font-bold text-gray-900 mb-4 flex items-center gap-2"><Zap className="w-5 h-5 text-indigo-600" />行动建议</h3>
+          <div className="space-y-4">{report.recommendations?.map((rec: any, i: number) => (
+            <div key={i} className="flex gap-4 p-6 bg-white border border-gray-200 rounded-xl"><div className="w-10 h-10 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0">{i + 1}</div><div><h4 className="font-bold text-gray-900 mb-1">{rec.action}</h4><p className="text-sm text-gray-600 mb-3">{rec.impact}</p></div></div>
+          ))}</div>
+        </section>
+      </div>
     </div>
   );
 };
@@ -415,7 +546,7 @@ export default function App() {
   return (
     <div className="min-h-screen bg-white font-sans text-gray-900">
       <AnimatePresence mode="wait">
-        <motion.div key={view} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+        <motion.div key={view} initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -10 }} transition={{ duration: 0.2 }}>
           {view === 'home' && <Home onCreateProject={() => setView('project-new')} onGoToKnowledge={() => setView('knowledge')} />}
           {view === 'project-new' && <ProjectNew onProjectCreated={handleProjectCreated} onBack={() => setView('home')} />}
           {view === 'user-config' && currentProject && <UserConfig project={currentProject} onUsersGenerated={handleUsersGenerated} onBack={() => setView('home')} />}
