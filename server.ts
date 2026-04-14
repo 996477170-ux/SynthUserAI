@@ -18,6 +18,12 @@ async function startServer() {
   let conversations: any[] = [];
   let messages: any[] = [];
 
+  // =====================================================================
+  // 🌟 修复点：把前端需要的旧版知识库接口补回来，防止前端报错
+  // =====================================================================
+  app.get("/api/knowledge", (req, res) => res.json([]));
+
+  // 基础 API
   app.get("/api/projects", (req, res) => res.json(projects));
   app.post("/api/projects", (req, res) => { const project = { ...req.body, id: Math.random().toString(36).substr(2, 9), createdAt: new Date().toISOString() }; projects.push(project); res.json(project); });
   app.get("/api/projects/:id", (req, res) => res.json(projects.find(p => p.id === req.params.id) || {}));
@@ -29,7 +35,7 @@ async function startServer() {
   app.post("/api/conversations", (req, res) => { const conv = { ...req.body, id: Math.random().toString(36).substr(2, 9), createdAt: new Date().toISOString() }; conversations.push(conv); res.json(conv); });
 
   // =====================================================================
-  // 🌟 智库搜索通道 (加入了你截图里的 filters 参数)
+  // 🌟 智库搜索通道
   // =====================================================================
   app.post("/api/search-kb", async (req, res) => {
     try {
@@ -50,7 +56,7 @@ async function startServer() {
           query: query,
           top_k: 3,
           filters: {
-            source_types: ["微信文章", "用研报告"] // 👈 这里加上了你截图里的必要参数
+            source_types: ["微信文章", "用研报告"]
           },
           use_vector: true,
           readable: true
