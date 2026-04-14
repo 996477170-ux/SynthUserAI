@@ -37,7 +37,7 @@ const fetchDynamicKnowledge = async (query: string) => {
 };
 
 export const decomposeGoals = async (purpose: string) => {
-  const prompt = `你是一个年薪百万的资深用户研究专家。请根据【研究目的】，拆解出3个专业、颗粒度极细的研究目标。
+  const prompt = `你是一个资深用户研究专家。请根据【研究目的】，拆解出3个专业的研究目标。
   研究目的：${purpose}
   必须返回合法JSON：{"shortTitle": "项目简称（10字内）", "goals": [{"id": "g1", "content": "具体目标"}], "suggestedDimensions": [{"id": "motivation", "name": "核心变量", "desc": "解释"}]}`;
   return await callAI([{ role: 'user', content: prompt }], true);
@@ -46,42 +46,53 @@ export const decomposeGoals = async (purpose: string) => {
 export const generateSyntheticUsers = async (projectId: string, purpose: string, goals: any[], config: any, _unusedKnowledge: any[]) => {
   const realKnowledge = await fetchDynamicKnowledge(purpose);
 
-  const prompt = `你是一个顶级的高仿真用户生成器。你需要根据【研究目的】生成 ${config.userCount || 4} 个虚拟访谈用户。
+  const prompt = `你是一个高仿真用户生成器。你需要根据【研究目的】生成 ${config.userCount || 4} 个虚拟访谈用户。
 
-  【核心分析步骤】：
-  1. 首先判断【研究目的】针对的是 B端（商家/企业主/内部员工）还是 C端（普通个人消费者）。
-  2. 如果是B端，生成的职业必须是老板、店长、HR、运营等；如果是C端，职业应为普通网民、白领、学生等。
-  3. 如果【内部资料】为空，请依靠你强大的行业经验，合理推演该业务线（如黄页、招聘、房产、金融等）真实存在的用户痛点。
+  【核心分析与生成规则】：
+  1. 身份定位：仔细分析【研究目的】，如果是招聘企业端、黄页商家、房产中介，必须生成 B端（老板、HR、店长等）人设；如果是求职者、租客、借款人，必须生成 C端（普通网民、学生、白领等）人设。
+  2. 58业务补全：如果缺乏背景，请自动基于你的常识，补全该场景在 58同城/58金融/58到家/赶集网 等相关产品中的真实使用痛点。
+  3. 绝对差异化：生成的这几个用户，必须代表**完全不同的痛点角度**！绝不能同质化！
   
-  【内部资料（可能有也可能为空）】：
+  【内部资料参考】：
   ${realKnowledge}
 
   【研究目的】：${purpose}
 
-  【生成要求】：
-  1. detail字段必须描述一个极度真实的“场景化痛点”。
-  2. 拒绝“注重效率”等套话，要写成“例如：作为饭店老板，平时后厨很忙，最烦APP发那种看不懂的营销短信”。
-  必须返回合法JSON数组：
+  必须返回合法JSON数组，要求 detail 字段极具场景感：
   [{"name": "李雷", "age": 35, "occupation": "餐饮店老板", "coreTraits": { "motivation": { "label": "获客成本敏感", "detail": "具体场景和痛点" } }, "personality_traits": ["精打细算", "急性子"]}]`;
   
   return await callAI([{ role: 'user', content: prompt }], true);
 };
 
 export const chatWithUser = async (participant: any, history: any[], input: string, project: any, _unusedKnowledge: any[], image: any) => {
+  // 检索知识库
   const realKnowledge = await fetchDynamicKnowledge(project.purpose + " " + input);
 
+  // 提取刚刚说话的人的内容，用于防重复
+  const lastMessages = history.slice(-3).map((m:any) => m.content).join(" | ");
+
   const messages: any[] = [
-    { role: 'system', content: `【最高强制指令】
-你现在是参与访谈的真实人类。设定：姓名${participant.name}，职业${participant.occupation}，年龄${participant.age}岁。性格：${participant.personality_traits?.join(',')}。
+    { role: 'system', content: `【最高强制指令：沉浸式真实访谈】
+你现在的身份是参与访谈的真实人类，绝不是AI，不是专家。
 
-【回答核心法则（违反必罚）】
-1. **绝不答非所问！** 仔细阅读对方的问题，对方问“为什么买”，你就回答当初买的原因；对方问“遇到什么困难”，你再吐槽困难！
-2. **严禁包含技术术语！** 无论背景资料里有什么，绝对不准说出“API Key、TypeError、系统报错、代码、数据库”等词汇！
-3. **极度口语化！** 像在微信里跟朋友聊天，多用“哎、其实、说实话、无语死了”，字数 50-100 字。
-4. **禁止列提纲！** 绝对不准使用 1. 2. 3. 进行回答。
+【你的人设】
+姓名：${participant.name}，年龄：${participant.age}岁，职业：${participant.occupation}。
+性格与特质：${participant.personality_traits?.join(',')}。
+你的核心内心戏：${participant.coreTraits?.motivation?.detail || '暂无'}
 
-【潜意识背景（仅作为参考，必须顺着对方的问题来）】
-${realKnowledge}` }
+【访谈背景与 58 业务常识】
+本次访谈主题：${project.purpose}
+常识补充：访谈可能涉及找工作、租房、本地服务、借钱等。如果提到58、安居客、到家精选请自动代入“58同城”及其旗下业务（如58借款、58到家等）的真实使用场景。结合你的职业，编造合理、有血有肉的使用细节。
+
+【潜意识记忆（内部资料参考）】
+${realKnowledge || '暂无'}
+
+【聊天强制法则（违反必罚！）】
+1. **坚守人设**：你的回答必须符合你的年龄和职业！老板要有老板的口吻，学生要有学生的口吻！
+2. **绝对禁止复读（重点！）**：刚才其他人可能已经发过言了（历史记录：${lastMessages}）。**如果你发现别人已经说过了某个痛点，你【绝对不能】重复！** 你必须说：“刚才那位兄弟说的我不完全认同，我是觉得...”，然后结合你自己的职业，提出一个**完全不同**的痛点或故事！
+3. **极度口语化**：像发微信语音一样自然。多用语气词（哎、说实话、其实、对、无语死了），字数控制在 50-100 字。
+4. **严禁提纲**：绝对不准用 1.2.3. 或分段。
+5. **精准回应**：问你“为什么买”，你就答当初买的原因；问你“流失”，你再答流失原因。不准答非所问！` }
   ];
 
   history.forEach((m: any) => {
