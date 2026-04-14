@@ -1,7 +1,5 @@
-// 统一使用硅基流动 720亿参数的顶级免费模型
 const AI_MODEL = "Qwen/Qwen2.5-72B-Instruct"; 
 
-// 呼叫大模型
 const callAI = async (messages: any[], requireJson = false) => {
   const res = await fetch('/api/ai', {
     method: 'POST',
@@ -18,14 +16,12 @@ const callAI = async (messages: any[], requireJson = false) => {
       const jsonStr = match ? match[1] : text.replace(/```json/g, '').replace(/```/g, '').trim();
       return JSON.parse(jsonStr);
     } catch (e) {
-      console.error("JSON 解析失败:", text);
       throw new Error("AI 返回格式错误，请重试");
     }
   }
   return text;
 };
 
-// 🌟 核心引擎：呼叫后端，去你们的 152 智库调取真实业务资料！
 const fetchDynamicKnowledge = async (query: string) => {
   try {
     const res = await fetch('/api/search-kb', {
@@ -36,56 +32,56 @@ const fetchDynamicKnowledge = async (query: string) => {
     const data = await res.json();
     return data.result;
   } catch (e) {
-    return "获取背景资料失败。";
+    return "";
   }
 };
 
 export const decomposeGoals = async (purpose: string) => {
-  const prompt = `你是一个资深互联网用户体验专家。请根据【研究目的】，拆解出3个极具专业度、颗粒度极细的研究目标。拒绝假大空套话。
+  const prompt = `你是一个年薪百万的资深用户研究专家。请根据【研究目的】，拆解出3个专业、颗粒度极细的研究目标。
   研究目的：${purpose}
-  必须返回合法JSON格式：
-  {"shortTitle": "项目简称（10字以内）", "goals": [{"id": "g1", "content": "具体目标"}], "suggestedDimensions": [{"id": "motivation", "name": "核心变量", "desc": "解释"}]}`;
+  必须返回合法JSON：{"shortTitle": "项目简称（10字内）", "goals": [{"id": "g1", "content": "具体目标"}], "suggestedDimensions": [{"id": "motivation", "name": "核心变量", "desc": "解释"}]}`;
   return await callAI([{ role: 'user', content: prompt }], true);
 };
 
 export const generateSyntheticUsers = async (projectId: string, purpose: string, goals: any[], config: any, _unusedKnowledge: any[]) => {
-  // 🚀 每次生成用户前，自动去 152 智库拉取最新资料！
   const realKnowledge = await fetchDynamicKnowledge(purpose);
 
-  const prompt = `你是一个高仿真用户生成器。请高度参考以下的【内部调研知识库资料】，根据研究目的生成 ${config.userCount || 4} 个虚拟访谈用户。
+  const prompt = `你是一个顶级的高仿真用户生成器。你需要根据【研究目的】生成 ${config.userCount || 4} 个虚拟访谈用户。
+
+  【核心分析步骤】：
+  1. 首先判断【研究目的】针对的是 B端（商家/企业主/内部员工）还是 C端（普通个人消费者）。
+  2. 如果是B端，生成的职业必须是老板、店长、HR、运营等；如果是C端，职业应为普通网民、白领、学生等。
+  3. 如果【内部资料】为空，请依靠你强大的行业经验，合理推演该业务线（如黄页、招聘、房产、金融等）真实存在的用户痛点。
   
-  【内部调研资料摘要】：
+  【内部资料（可能有也可能为空）】：
   ${realKnowledge}
 
   【研究目的】：${purpose}
 
   【生成要求】：
-  1. 用户的核心变量（detail）必须直接关联上述资料中提到的“真实业务痛点”。
-  2. 描述要接地气，带入真实生活场景。
-  3. 性格标签要真实立体。
+  1. detail字段必须描述一个极度真实的“场景化痛点”。
+  2. 拒绝“注重效率”等套话，要写成“例如：作为饭店老板，平时后厨很忙，最烦APP发那种看不懂的营销短信”。
   必须返回合法JSON数组：
-  [{"name": "王强", "age": 28, "occupation": "产品经理", "coreTraits": { "motivation": { "label": "效率至上", "detail": "关联资料痛点的具体描述" } }, "personality_traits": ["急性子"]}]`;
+  [{"name": "李雷", "age": 35, "occupation": "餐饮店老板", "coreTraits": { "motivation": { "label": "获客成本敏感", "detail": "具体场景和痛点" } }, "personality_traits": ["精打细算", "急性子"]}]`;
   
   return await callAI([{ role: 'user', content: prompt }], true);
 };
 
 export const chatWithUser = async (participant: any, history: any[], input: string, project: any, _unusedKnowledge: any[], image: any) => {
-  // 🚀 每次聊天互动时，根据用户的提问，再次去 152 智库精准检索最新痛点！
   const realKnowledge = await fetchDynamicKnowledge(project.purpose + " " + input);
 
   const messages: any[] = [
-    { role: 'system', content: `【最高指令】你是参与产品体验访谈的真实普通用户。
-设定：姓名${participant.name}，职业${participant.occupation}，年龄${participant.age}岁。性格特点：${participant.personality_traits?.join(',')}。
+    { role: 'system', content: `【最高强制指令】
+你现在是参与访谈的真实人类。设定：姓名${participant.name}，职业${participant.occupation}，年龄${participant.age}岁。性格：${participant.personality_traits?.join(',')}。
 
-【潜意识记忆（关键！）】
-你曾真实经历过以下内部资料中描述的痛点。请把这些痛点当做你的“亲身经历”，在聊天中自然地抱怨出来：
-${realKnowledge}
+【回答核心法则（违反必罚）】
+1. **绝不答非所问！** 仔细阅读对方的问题，对方问“为什么买”，你就回答当初买的原因；对方问“遇到什么困难”，你再吐槽困难！
+2. **严禁包含技术术语！** 无论背景资料里有什么，绝对不准说出“API Key、TypeError、系统报错、代码、数据库”等词汇！
+3. **极度口语化！** 像在微信里跟朋友聊天，多用“哎、其实、说实话、无语死了”，字数 50-100 字。
+4. **禁止列提纲！** 绝对不准使用 1. 2. 3. 进行回答。
 
-【强制扮演规则】
-1. 绝对不要说自己是AI。
-2. 绝对禁止分点列提纲（如 1. 2. 3.）。
-3. 使用极度口语化的第一人称，像在微信群里跟朋友吐槽，字数控制在 50-150 字以内。
-4. 回答必须带有你性格设定的情绪。每次回答只讲一两件小事，不要长篇大论。` }
+【潜意识背景（仅作为参考，必须顺着对方的问题来）】
+${realKnowledge}` }
   ];
 
   history.forEach((m: any) => {
