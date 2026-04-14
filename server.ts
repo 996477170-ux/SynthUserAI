@@ -35,43 +35,38 @@ async function startServer() {
   app.post("/api/conversations", (req, res) => { const conv = { ...req.body, id: Math.random().toString(36).substr(2, 9), createdAt: new Date().toISOString() }; conversations.push(conv); res.json(conv); });
 
   // =====================================================================
-  // 🌟 智库搜索通道
+  // 🌟 智库搜索通道 (加入了严格的清洗过滤机制)
   // =====================================================================
   app.post("/api/search-kb", async (req, res) => {
     try {
       const { query } = req.body;
       const uxApiKey = process.env.UX_KNOWLEDGE_KEY;
-
-      if (!uxApiKey) {
-        return res.json({ result: "未配置内部智库密钥，没有背景资料。" });
-      }
+      if (!uxApiKey) return res.json({ result: "" }); // 没有 key 就返回空，不传报错
 
       const response = await fetch("http://152.136.139.107/api/search/summary", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-API-Key": uxApiKey
-        },
+        headers: { "Content-Type": "application/json", "X-API-Key": uxApiKey },
         body: JSON.stringify({
           query: query,
           top_k: 3,
-          filters: {
-            source_types: ["微信文章", "用研报告"]
-          },
+          filters: { source_types: ["微信文章", "用研报告"] },
           use_vector: true,
           readable: true
         })
       });
 
       const data = await response.json();
-      res.json({ result: JSON.stringify(data) });
+      
+      // 🌟 核心拦截：如果接口返回了 error 或者没搜到东西，绝对不要传给 AI！
+      if (data.error || !data.data) {
+        return res.json({ result: "" }); 
+      }
+      res.json({ result: JSON.stringify(data.data) }); // 只把真正的数据 data 传过去
 
     } catch (error) {
-      console.error("智库搜索失败:", error);
-      res.json({ result: "智库搜索超时或失败，暂无背景资料。" }); 
+      res.json({ result: "" }); // 哪怕网络断了，也返回空，绝不让 AI 看到代码报错
     }
   });
-
   // =====================================================================
   // 🌟 硅基流动大模型通道
   // =====================================================================
