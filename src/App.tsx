@@ -322,14 +322,11 @@ const UserConfig = ({ project, onUsersGenerated, onBack }: any) => {
     }
     setLoading(true);
     try {
-      // Fetch knowledge base for context
-      const kbRes = await fetch('/api/knowledge');
-      const knowledgeBase = await kbRes.json();
-
       const finalDimensions = [...config.subjectiveDimensions];
       if (config.customDimensions) {
         finalDimensions.push(...config.customDimensions.split(',').map(d => d.trim()));
       }
+      // 传入空数组 []，因为真实智库数据由后端动态获取
       const generatedUsers = await generateSyntheticUsers(project.id, project.purpose, project.goals, {
         ...config,
         subjectiveDimensions: finalDimensions,
@@ -340,7 +337,8 @@ const UserConfig = ({ project, onUsersGenerated, onBack }: any) => {
         usageTimeRange: config.selectedObjectiveVariables.includes('usage_time')
           ? config.usageTimeRange.join(', ')
           : undefined
-      }, knowledgeBase);
+      }, []); 
+      
       for (const user of generatedUsers) {
         await fetch('/api/users', {
           method: 'POST',
@@ -721,14 +719,14 @@ const Chat = ({ project, users, participantIds, onBack, onGenerateReport }: any)
     setLoading(true);
 
     try {
-      // Fetch knowledge base for context
-      const kbRes = await fetch('/api/knowledge');
-      const knowledgeBase = await kbRes.json();
-
-      // For each participant, get a response
       let currentHistory = updatedMessages;
       for (const participant of participants) {
-        const aiResponse = await chatWithUser(participant, currentHistory, input, project, knowledgeBase, currentImage || undefined);
+        // 添加一点延迟，让焦点小组有真实的交替回复感，也防止请求过快
+        if (isFocusGroup && currentHistory.length > updatedMessages.length) {
+            await new Promise(resolve => setTimeout(resolve, 800)); 
+        }
+
+        const aiResponse = await chatWithUser(participant, currentHistory, input, project, [], currentImage || undefined);
         const aiMsg = {
           conversationId,
           senderType: 'synthetic_user',
@@ -744,7 +742,6 @@ const Chat = ({ project, users, participantIds, onBack, onGenerateReport }: any)
         currentHistory = [...currentHistory, savedAiMsg];
         setMessages(currentHistory);
         
-        // If 1v1, stop after one response. If group, maybe wait or let others talk.
         if (!isFocusGroup) break;
       }
     } catch (error) {
