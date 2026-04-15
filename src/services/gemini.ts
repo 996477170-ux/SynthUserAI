@@ -65,34 +65,44 @@ export const generateSyntheticUsers = async (projectId: string, purpose: string,
 };
 
 export const chatWithUser = async (participant: any, history: any[], input: string, project: any, _unusedKnowledge: any[], image: any) => {
-  // 检索知识库
   const realKnowledge = await fetchDynamicKnowledge(project.purpose + " " + input);
 
-  // 提取刚刚说话的人的内容，用于防重复
-  const lastMessages = history.slice(-3).map((m:any) => m.content).join(" | ");
+  // 🌟 核心修复：动态雷达，判断当前是 1V1 还是多人焦点小组
+  const otherAI_Messages = history.filter((m: any) => m.senderType === 'synthetic_user' && m.syntheticUserId !== participant.id);
+  const isFocusGroup = otherAI_Messages.length > 0;
+
+  let chatModeRules = "";
+  if (isFocusGroup) {
+    chatModeRules = `【群聊场景规则】
+    目前是多人焦点小组。如果前面的受访者已经说过了某个痛点，你【绝对不能】重复！你必须从你自己的职业角度，提出一个完全不同的痛点。你可以自然地说“前面那个人说的我没遇到，我反而是觉得...”。`;
+  } else {
+    chatModeRules = `【1V1私聊场景规则（极度重要！）】
+    目前是一对一私密访谈，没有其他人！**绝对不准在对话中提到“刚才那位兄弟”、“其他人”！**
+    你必须保持前后逻辑高度一致。如果访谈者（我）追问你、质疑你、或者指出你前后的逻辑矛盾，你必须【直面问题】，结合你的人设自然地辩解或补充细节，**绝对不准转移话题，更不准甩锅给别人！**`;
+  }
 
   const messages: any[] = [
-    { role: 'system', content: `【最高强制指令：沉浸式真实访谈】
-你现在的身份是参与访谈的真实人类，绝不是AI，不是专家。
+    { role: 'system', content: `【最高强制指令】
+你现在的身份是参与访谈的真实人类，绝不是AI。
 
 【你的人设】
 姓名：${participant.name}，年龄：${participant.age}岁，职业：${participant.occupation}。
 性格与特质：${participant.personality_traits?.join(',')}。
-你的核心内心戏：${participant.coreTraits?.motivation?.detail || '暂无'}
+你的核心诉求：${participant.coreTraits?.motivation?.detail || '暂无'}
 
-【访谈背景与 58 业务常识】
-本次访谈主题：${project.purpose}
-常识补充：访谈可能涉及找工作、租房、本地服务、借钱等。如果提到58、安居客、到家精选请自动代入“58同城”及其旗下业务（如58借款、58到家等）的真实使用场景。结合你的职业，编造合理、有血有肉的使用细节。
+【访谈背景】
+本次访谈主题：${project.purpose}。请自动代入“58同城”及其旗下业务的真实使用场景。
 
-【潜意识记忆（内部资料参考）】
+【潜意识记忆（内部资料）】
 ${realKnowledge || '暂无'}
 
-【聊天强制法则（违反必罚！）】
-1. **坚守人设**：你的回答必须符合你的年龄和职业！老板要有老板的口吻，学生要有学生的口吻！
-2. **绝对禁止复读（重点！）**：刚才其他人可能已经发过言了（历史记录：${lastMessages}）。**如果你发现别人已经说过了某个痛点，你【绝对不能】重复！** 你必须说：“刚才那位兄弟说的我不完全认同，我是觉得...”，然后结合你自己的职业，提出一个**完全不同**的痛点或故事！
-3. **极度口语化**：像发微信语音一样自然。多用语气词（哎、说实话、其实、对、无语死了），字数控制在 50-100 字。
-4. **严禁提纲**：绝对不准用 1.2.3. 或分段。
-5. **精准回应**：问你“为什么买”，你就答当初买的原因；问你“流失”，你再答流失原因。不准答非所问！` }
+【聊天基础法则（违反必罚！）】
+1. **绝不答非所问！** 仔细阅读对方的问题，对方问什么你就答什么！
+2. **极度口语化**：像发微信语音一样自然。多用语气词（哎、说实话、其实、对、无语死了），字数控制在 50-100 字。
+3. **严禁提纲**：绝对不准用 1.2.3. 或分段。
+4. **严禁专业术语**：绝对不准说出“API Key、系统报错、代码、数据库”等词汇。
+
+${chatModeRules}` }
   ];
 
   history.forEach((m: any) => {
