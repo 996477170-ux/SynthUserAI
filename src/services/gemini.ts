@@ -1,10 +1,13 @@
-const AI_MODEL = "Qwen/Qwen2.5-72B-Instruct"; 
+// 🌟 升级：我们准备了两个大脑。默认用文本大脑，一旦探测到图片，瞬间切换为视觉大脑！
+const TEXT_MODEL = "Qwen/Qwen2.5-72B-Instruct"; 
+const VISION_MODEL = "Qwen/Qwen2-VL-72B-Instruct"; // 硅基流动的顶级免费多模态大模型
 
-const callAI = async (messages: any[], requireJson = false) => {
+// 🌟 升级：增加 useVision 参数，控制动态切换模型
+const callAI = async (messages: any[], requireJson = false, useVision = false) => {
   const res = await fetch('/api/ai', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ messages, model: AI_MODEL })
+    body: JSON.stringify({ messages, model: useVision ? VISION_MODEL : TEXT_MODEL }) 
   });
   const data = await res.json();
   if (data.error) throw new Error(data.error);
@@ -52,15 +55,12 @@ export const decomposeGoals = async (purpose: string) => {
 export const generateSyntheticUsers = async (projectId: string, purpose: string, goals: any[], config: any, _unusedKnowledge: any[]) => {
   const realKnowledge = await fetchDynamicKnowledge(purpose);
 
-  // 🌟 核心修复1：捕获身份配置
   const roleConstraint = (config.selectedRoles && config.selectedRoles.length > 0) 
     ? `【强制身份限制】：必须严格从以下用户勾选的身份中分配职业：${config.selectedRoles.join(', ')}。` 
     : `【身份定位】：仔细分析【研究目的】，如果是企业端/商家则生成B端人设；如果是消费者/租客则生成C端人设。`;
 
-  // 🌟 核心修复2：捕获【核心变量（主观维度）】
   const coreVars = config.subjectiveDimensions?.join(', ') || '动机偏好';
   
-  // 🌟 核心修复3：捕获【客观变量（人口统计学）】
   let objectiveVarsStr = "";
   if (config.ageRange) objectiveVarsStr += `- 年龄范围限制在：${config.ageRange.min}到${config.ageRange.max}岁之间；\n`;
   if (config.genderRatio !== undefined) objectiveVarsStr += `- 性别比例尽量遵循：男性约${config.genderRatio}%，女性约${100-config.genderRatio}%；\n`;
@@ -88,7 +88,7 @@ export const generateSyntheticUsers = async (projectId: string, purpose: string,
   return await callAI([{ role: 'user', content: prompt }], true);
 };
 
-export const chatWithUser = async (participant: any, history: any[], input: string, project: any, _unusedKnowledge: any[], image: any) => {
+export const chatWithUser = async (participant: any, history: any[], input: string, project: any, _unusedKnowledge: any[], images: any) => {
   const realKnowledge = await fetchDynamicKnowledge(project.purpose + " " + input);
 
   const otherAI_Messages = history.filter((m: any) => m.senderType === 'synthetic_user' && m.syntheticUserId !== participant.id);
@@ -120,7 +120,7 @@ export const chatWithUser = async (participant: any, history: any[], input: stri
 ${realKnowledge || '暂无'}
 
 【聊天基础法则（违反必罚！）】
-1. **绝不答非所问！** 仔细阅读对方的问题，对方问什么你就答什么！
+1. **绝不答非所问！** 仔细阅读对方的问题，对方问什么你就答什么！如果有图片，必须结合图片给出极其主观的评价！
 2. **极度口语化**：像发微信语音一样自然。多用语气词（哎、说实话、其实、对、无语死了），字数控制在 50-100 字。
 3. **严禁提纲**：绝对不准用 1.2.3. 或分段。
 4. **严禁专业术语**：绝对不准说出“API Key、系统报错、代码、数据库”等词汇。
@@ -128,21 +128,52 @@ ${realKnowledge || '暂无'}
 ${chatModeRules}` }
   ];
 
+  // 🌟 动态雷达：检查历史记录或当前对话中是否包含图片
+  let hasImageInContext = false; 
+
+  // 🌟 升级：装载历史对话，支持单图和多图
   history.forEach((m: any) => {
+    let contentArray: any[] = [];
+    if (m.content) contentArray.push({ type: "text", text: m.content });
+    
+    // 兼容历史记录中的单张图
     if (m.imageUrl) {
-      messages.push({ role: m.senderType === 'user' ? 'user' : 'assistant', content: [{ type: "text", text: m.content || "图片" }, { type: "image_url", image_url: { url: m.imageUrl } }] });
-    } else {
+      contentArray.push({ type: "image_url", image_url: { url: m.imageUrl } });
+      hasImageInContext = true;
+    }
+    // 兼容新版的多图 (imageUrls)
+    if (m.imageUrls && m.imageUrls.length > 0) {
+      m.imageUrls.forEach((url: string) => contentArray.push({ type: "image_url", image_url: { url } }));
+      hasImageInContext = true;
+    }
+
+    if (contentArray.length === 1 && contentArray[0].type === "text") {
       messages.push({ role: m.senderType === 'user' ? 'user' : 'assistant', content: m.content });
+    } else {
+      messages.push({ role: m.senderType === 'user' ? 'user' : 'assistant', content: contentArray });
     }
   });
 
-  if (image) {
-    messages.push({ role: 'user', content: [{ type: "text", text: input || "看图" }, { type: "image_url", image_url: { url: `data:${image.mimeType};base64,${image.data}` } }] });
-  } else {
-    messages.push({ role: 'user', content: input });
+  // 🌟 升级：装载当前发言，支持多图传输给 AI
+  let currentContentArray: any[] = [];
+  if (input) currentContentArray.push({ type: "text", text: input });
+  else if (images && images.length > 0) currentContentArray.push({ type: "text", text: "请看这些设计图" });
+
+  if (images && images.length > 0) {
+    hasImageInContext = true;
+    images.forEach((img: any) => {
+      currentContentArray.push({ type: "image_url", image_url: { url: `data:${img.mimeType};base64,${img.data}` } });
+    });
   }
 
-  return await callAI(messages, false);
+  if (currentContentArray.length === 1 && currentContentArray[0].type === "text") {
+    messages.push({ role: 'user', content: input || "继续" });
+  } else {
+    messages.push({ role: 'user', content: currentContentArray });
+  }
+
+  // 🌟 动态模型切换：如果有图，就传入 true 激活 VISION_MODEL (Qwen2-VL)
+  return await callAI(messages, false, hasImageInContext);
 };
 
 export const generateReport = async (project: any, users: any[], messages: any[]) => {
