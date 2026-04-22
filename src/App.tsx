@@ -157,6 +157,8 @@ const ProjectNew = ({ onProjectCreated, onBack }: any) => {
   const [goals, setGoals] = useState<any[]>([]);
   const [shortTitle, setShortTitle] = useState('');
   const [suggestedDimensions, setSuggestedDimensions] = useState<any[]>([]);
+  // 🌟 新增1：声明一个状态，用来临时存放 AI 推测出的目标群体身份
+  const [suggestedRoles, setSuggestedRoles] = useState<string[]>([]); 
   const [step, setStep] = useState(1);
 
   const templates = [
@@ -171,9 +173,11 @@ const ProjectNew = ({ onProjectCreated, onBack }: any) => {
     setLoading(true);
     try {
       const result = await decomposeGoals(purpose);
-      setGoals(result.goals);
-      setShortTitle(result.shortTitle);
-      setSuggestedDimensions(result.suggestedDimensions);
+      setGoals(result.goals || []);
+      setShortTitle(result.shortTitle || '未命名研究');
+      setSuggestedDimensions(result.suggestedDimensions || []);
+      // 🌟 新增2：从 AI 的返回结果中，把推测的身份存下来
+      setSuggestedRoles(result.suggestedRoles || []); 
       setStep(2);
     } catch (error) {
       console.error(error);
@@ -186,7 +190,8 @@ const ProjectNew = ({ onProjectCreated, onBack }: any) => {
     const res = await fetch('/api/projects', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ purpose, goals, shortTitle, suggestedDimensions }),
+      // 🌟 新增3：极其重要！把 suggestedRoles 一并打包发给服务器保存
+      body: JSON.stringify({ purpose, goals, shortTitle, suggestedDimensions, suggestedRoles }),
     });
     const project = await res.json();
     onProjectCreated(project);
