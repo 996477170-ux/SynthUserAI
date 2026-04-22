@@ -35,34 +35,6 @@ import { Project, SyntheticUser, Message, Conversation, KnowledgeDoc } from './t
 import { decomposeGoals, generateSyntheticUsers, chatWithUser, generateReport } from './services/gemini';
 
 // --- Components ---
-// 🌟 必须加上这个函数，否则上传图片会直接导致白屏崩溃
-const resizeImage = (base64: string, maxWidth = 1024, maxHeight = 1024): Promise<string> => {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.src = base64;
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      let width = img.width;
-      let height = img.height;
-      if (width > height) {
-        if (width > maxWidth) {
-          height *= maxWidth / width;
-          width = maxWidth;
-        }
-      } else {
-        if (height > maxHeight) {
-          width *= maxHeight / height;
-          height = maxHeight;
-        }
-      }
-      canvas.width = width;
-      canvas.height = height;
-      const ctx = canvas.getContext('2d');
-      ctx?.drawImage(img, 0, 0, width, height);
-      resolve(canvas.toDataURL('image/jpeg', 0.8));
-    };
-  });
-};
 
 const Button = ({ className, variant = 'primary', size = 'md', ...props }: any) => {
   const variants: any = {
@@ -789,6 +761,8 @@ const Chat = ({ project, users, participantIds, onBack, onGenerateReport }: any)
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [conversationId, setConversationId] = useState('');
+  
+  // 🌟 升级：支持多图
   const [selectedImages, setSelectedImages] = useState<{ data: string; mimeType: string }[]>([]);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
@@ -797,15 +771,17 @@ const Chat = ({ project, users, participantIds, onBack, onGenerateReport }: any)
 
   useEffect(() => {
     const initChat = async () => {
-      try {
-        const res = await fetch('/api/conversations', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ projectId: project.id, type: isFocusGroup ? 'focus_group' : 'one_on_one', participantIds }),
-        });
-        const conv = await res.json();
-        setConversationId(conv.id);
-      } catch (e) { console.error("初始化对话失败", e); }
+      const res = await fetch('/api/conversations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          projectId: project.id, 
+          type: isFocusGroup ? 'focus_group' : 'one_on_one',
+          participantIds 
+        }),
+      });
+      const conv = await res.json();
+      setConversationId(conv.id);
     };
     initChat();
   }, []);
@@ -815,12 +791,10 @@ const Chat = ({ project, users, participantIds, onBack, onGenerateReport }: any)
     files.forEach(file => {
       const reader = new FileReader();
       reader.onload = async (event) => {
-        try {
-          const base64 = event.target?.result as string;
-          const resizedBase64 = await resizeImage(base64); // 🌟 这里会用到第一步定义的函数
-          const data = resizedBase64.split(',')[1];
-          setSelectedImages(prev => [...prev, { data, mimeType: file.type || 'image/jpeg' }]);
-        } catch (err) { console.error("图片压缩失败", err); }
+        const base64 = event.target?.result as string;
+        const resizedBase64 = await resizeImage(base64);
+        const data = resizedBase64.split(',')[1];
+        setSelectedImages(prev => [...prev, { data, mimeType: file.type || 'image/jpeg' }]);
       };
       reader.readAsDataURL(file);
     });
@@ -829,33 +803,42 @@ const Chat = ({ project, users, participantIds, onBack, onGenerateReport }: any)
 
   const handleSend = async () => {
     if ((!input.trim() && selectedImages.length === 0) || loading) return;
+    
     const userMsg = {
       conversationId,
       senderType: 'user',
       content: input,
+      // 使用复数形式以支持多图
       imageUrls: selectedImages.length > 0 ? selectedImages.map(img => `data:${img.mimeType};base64,${img.data}`) : undefined,
     };
-    try {
-      const res = await fetch('/api/messages', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(userMsg),
-      });
-      const savedUserMsg = await res.json();
-      const updatedMessages = [...messages, savedUserMsg];
-      setMessages(updatedMessages);
-      setInput('');
-      const imgsToSend = [...selectedImages];
-      setSelectedImages([]);
-      setLoading(true);
 
+    const res = await fetch('/api/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(userMsg),
+    });
+    const savedUserMsg = await res.json();
+    const updatedMessages = [...messages, savedUserMsg];
+    setMessages(updatedMessages);
+    setInput('');
+    const imgsToSend = [...selectedImages];
+    setSelectedImages([]);
+    setLoading(true);
+
+    try {
       let currentHistory = updatedMessages;
       for (const participant of participants) {
         if (isFocusGroup && currentHistory.length > updatedMessages.length) {
             await new Promise(resolve => setTimeout(resolve, 800)); 
         }
+
         const aiResponse = await chatWithUser(participant, currentHistory, input, project, [], imgsToSend);
-        const aiMsg = { conversationId, senderType: 'synthetic_user', syntheticUserId: participant.id, content: aiResponse };
+        const aiMsg = {
+          conversationId,
+          senderType: 'synthetic_user',
+          syntheticUserId: participant.id,
+          content: aiResponse,
+        };
         const resAi = await fetch('/api/messages', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -863,10 +846,15 @@ const Chat = ({ project, users, participantIds, onBack, onGenerateReport }: any)
         });
         const savedAiMsg = await resAi.json();
         currentHistory = [...currentHistory, savedAiMsg];
-        setMessages([...currentHistory]);
+        setMessages(currentHistory);
+        
         if (!isFocusGroup) break;
       }
-    } catch (error) { console.error("发送消息失败", error); } finally { setLoading(false); }
+    } catch (error) {
+      console.error(error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -884,21 +872,26 @@ const Chat = ({ project, users, participantIds, onBack, onGenerateReport }: any)
 
       <div className="flex-1 overflow-y-auto p-6 space-y-6">
         <div className="max-w-4xl mx-auto space-y-6">
-          {messages.map((msg, idx) => {
+          {messages.map((msg) => {
             const isUser = msg.senderType === 'user';
             const participant = participants.find((p: any) => p.id === msg.syntheticUserId);
             return (
-              <div key={msg.id || idx} className={cn('flex gap-4', isUser ? 'flex-row-reverse' : 'flex-row')}>
-                {!isUser && <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold shrink-0">{participant?.name?.[0] || 'A'}</div>}
+              <div key={msg.id} className={cn('flex gap-4', isUser ? 'flex-row-reverse' : 'flex-row')}>
+                {!isUser && <div className="w-10 h-10 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold shrink-0">{participant?.name[0] || 'A'}</div>}
                 <div className={cn('max-w-[80%] p-4 rounded-2xl shadow-sm', isUser ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-white text-gray-800 border border-gray-200 rounded-tl-none')}>
                   {!isUser && isFocusGroup && <div className="text-[10px] font-bold text-indigo-600 uppercase mb-1">{participant?.name}</div>}
+                  
+                  {/* 支持渲染多张图片 */}
                   {msg.imageUrls ? (
                     <div className="flex flex-wrap gap-2 mb-2">
-                      {msg.imageUrls.map((url: string, i: number) => <img key={i} src={url} alt="Uploaded" className="max-h-60 rounded-lg border border-white/20" referrerPolicy="no-referrer" />)}
+                      {msg.imageUrls.map((url: string, i: number) => (
+                        <img key={i} src={url} alt="Uploaded" className="max-h-60 rounded-lg border border-white/20" referrerPolicy="no-referrer" />
+                      ))}
                     </div>
                   ) : msg.imageUrl && (
                     <img src={msg.imageUrl} alt="Uploaded" className="max-w-full rounded-lg mb-2 border border-white/20" referrerPolicy="no-referrer" />
                   )}
+                  
                   <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
                 </div>
               </div>
@@ -910,12 +903,13 @@ const Chat = ({ project, users, participantIds, onBack, onGenerateReport }: any)
 
       <div className="bg-white border-t border-gray-200 p-6 shrink-0">
         <div className="max-w-4xl mx-auto">
+          {/* 多图预览区 */}
           {selectedImages.length > 0 && (
             <div className="mb-4 flex flex-wrap gap-3">
               {selectedImages.map((img, index) => (
                 <div key={index} className="relative inline-block">
                   <img src={`data:${img.mimeType};base64,${img.data}`} alt="Preview" className="h-20 w-20 object-cover rounded-lg border-2 border-indigo-500" />
-                  <button onClick={() => setSelectedImages(prev => prev.filter((_, i) => i !== index))} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 shadow-lg hover:bg-red-600 transition-colors"><X size={12} /></button>
+                  <button onClick={() => setSelectedImages(prev => prev.filter((_, i) => i !== index))} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 shadow-lg hover:bg-red-600 transition-colors"><X className="w-3 h-3" /></button>
                 </div>
               ))}
             </div>
