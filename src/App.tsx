@@ -304,9 +304,11 @@ const UserConfig = ({ project, onUsersGenerated, onBack }: any) => {
     subjectiveDimensions: project.suggestedDimensions?.map((d: any) => d.id) || ['motivation', 'decision_style'],
     customDimensions: '',
     selectedObjectiveVariables: [] as string[],
+    // 🌟 新增：默认选中 AI 推测出的目标群体角色
+    selectedRoles: project.suggestedRoles || [], 
     userCount: 4,
     ageRange: { min: 20, max: 40 },
-    genderRatio: 50, // 50 means 50% male
+    genderRatio: 50,
     cityTierRange: ['一线', '新一线'],
     incomeRange: { min: 5000, max: 20000 },
     educationRange: ['本科'],
@@ -326,7 +328,7 @@ const UserConfig = ({ project, onUsersGenerated, onBack }: any) => {
       if (config.customDimensions) {
         finalDimensions.push(...config.customDimensions.split(',').map(d => d.trim()));
       }
-      // 传入空数组 []，因为真实智库数据由后端动态获取
+      
       const generatedUsers = await generateSyntheticUsers(project.id, project.purpose, project.goals, {
         ...config,
         subjectiveDimensions: finalDimensions,
@@ -424,6 +426,29 @@ const UserConfig = ({ project, onUsersGenerated, onBack }: any) => {
         </div>
 
         <div className="space-y-8">
+          
+          {/* 🌟 新增：目标群体身份确认区块 */}
+          {project.suggestedRoles && project.suggestedRoles.length > 0 && (
+            <div className="p-5 border border-indigo-100 rounded-xl bg-indigo-50/50 shadow-sm">
+              <h3 className="text-lg font-bold text-indigo-900 mb-2 flex items-center gap-2">
+                <Users className="w-5 h-5 text-indigo-600" />
+                目标群体身份 (AI 推断)
+              </h3>
+              <p className="text-xs text-indigo-600/80 mb-4">请勾选本次研究针对的具体身份，AI 将仅在所选身份内生成职业（如租客/房东等）。</p>
+              <div className="flex flex-wrap gap-2">
+                {project.suggestedRoles.map((role: string) => (
+                  <label key={role} className={cn("px-4 py-2 rounded-lg text-sm font-medium border cursor-pointer transition-all flex items-center gap-2", config.selectedRoles.includes(role) ? "bg-indigo-600 text-white border-indigo-600" : "bg-white text-gray-600 border-gray-200 hover:border-indigo-300")}>
+                    <input type="checkbox" className="hidden" checked={config.selectedRoles.includes(role)} onChange={(e) => {
+                      const roles = e.target.checked ? [...config.selectedRoles, role] : config.selectedRoles.filter(r => r !== role);
+                      setConfig({ ...config, selectedRoles: roles });
+                    }} />
+                    {role}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div>
             <h3 className="text-lg font-bold text-gray-900 mb-1 flex items-center gap-2">
               <Settings className="w-5 h-5 text-indigo-600" />
@@ -543,6 +568,8 @@ const UserConfig = ({ project, onUsersGenerated, onBack }: any) => {
 
 const Dashboard = ({ project, users, onChat, onReport, onBack }: any) => {
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
+  // 🌟 新增：用于控制弹窗展示哪个用户
+  const [detailUser, setDetailUser] = useState<any>(null);
 
   const toggleUser = (id: string) => {
     setSelectedUserIds(prev => 
@@ -565,7 +592,7 @@ const Dashboard = ({ project, users, onChat, onReport, onBack }: any) => {
           <h2 className="text-2xl font-bold text-gray-900 mb-1 truncate" title={project.purpose}>
             {project.shortTitle || project.purpose}
           </h2>
-          <p className="text-sm text-gray-500 mb-4">请选择访谈对象，点击上方卡片勾选用户，支持单选或多选。</p>
+          <p className="text-sm text-gray-500 mb-4">点击卡片主体查看详细画像；点击卡片右上角勾选访谈对象。</p>
           <div className="flex flex-wrap gap-3 items-center">
             <Badge variant="primary" className="normal-case py-1 px-3">项目 ID: {project.id}</Badge>
             <Badge variant="success" className="normal-case py-1 px-3">已生成 {users.length} 个合成用户</Badge>
@@ -593,13 +620,16 @@ const Dashboard = ({ project, users, onChat, onReport, onBack }: any) => {
           <Card 
             key={user.id} 
             className={cn(
-              'p-6 cursor-pointer transition-all border-2 relative group flex flex-col h-full',
-              selectedUserIds.includes(user.id) ? 'border-indigo-600 ring-4 ring-indigo-50 bg-indigo-50/10' : 'border-transparent hover:border-indigo-200 hover:shadow-md'
+              'p-6 cursor-pointer transition-all border-2 relative group flex flex-col h-full hover:shadow-xl hover:-translate-y-1',
+              selectedUserIds.includes(user.id) ? 'border-indigo-600 ring-4 ring-indigo-50 bg-indigo-50/10' : 'border-transparent hover:border-indigo-200'
             )}
-            onClick={() => toggleUser(user.id)}
+            onClick={() => setDetailUser(user)} // 🌟 修复：点击卡片主体弹出详情
           >
-            <div className={cn(
-              "absolute top-4 right-4 w-6 h-6 rounded-full flex items-center justify-center border-2 transition-all z-10",
+            {/* 🌟 修复：勾选框独立，阻止冒泡 */}
+            <div 
+              onClick={(e) => { e.stopPropagation(); toggleUser(user.id); }}
+              className={cn(
+              "absolute top-4 right-4 w-6 h-6 rounded-full flex items-center justify-center border-2 transition-all z-10 hover:scale-110",
               selectedUserIds.includes(user.id) 
                 ? "bg-indigo-600 border-indigo-600 text-white" 
                 : "bg-white border-gray-200 text-transparent group-hover:border-indigo-300"
@@ -631,7 +661,7 @@ const Dashboard = ({ project, users, onChat, onReport, onBack }: any) => {
                       <div className="text-xs font-bold text-indigo-600">
                         {project.suggestedDimensions?.find((d: any) => d.id === key)?.name || (translatedKey[key] || key)}: {trait.label}
                       </div>
-                      <div className="text-[11px] text-gray-600 leading-relaxed mt-0.5 line-clamp-2">{trait.detail}</div>
+                      <div className="text-[11px] text-gray-600 leading-relaxed mt-0.5 line-clamp-3">{trait.detail}</div>
                     </div>
                   );
                 })}
@@ -649,9 +679,78 @@ const Dashboard = ({ project, users, onChat, onReport, onBack }: any) => {
           </Card>
         ))}
       </div>
+
+      {/* 🌟 新增：用户详情模态窗 */}
+      <AnimatePresence>
+        {detailUser && (
+          <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 md:p-6">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95, y: 20 }} 
+              animate={{ opacity: 1, scale: 1, y: 0 }} 
+              exit={{ opacity: 0, scale: 0.95, y: 20 }} 
+              className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden"
+            >
+              <div className="flex justify-between items-center p-6 border-b border-gray-100">
+                <div className="flex items-center gap-4">
+                  <div className="w-14 h-14 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 font-bold text-2xl">{detailUser.name[0]}</div>
+                  <div>
+                    <h2 className="text-2xl font-bold text-gray-900">{detailUser.name}</h2>
+                    <p className="text-gray-500">{detailUser.occupation} · {detailUser.age}岁</p>
+                  </div>
+                </div>
+                <button onClick={() => setDetailUser(null)} className="p-2 text-gray-400 hover:text-gray-900 hover:bg-gray-100 rounded-full transition-colors">
+                  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                </button>
+              </div>
+              
+              <div className="p-6 overflow-y-auto flex-1 space-y-8 bg-gray-50/50">
+                <section>
+                  <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4 flex items-center gap-2"><BrainCircuit className="w-4 h-4" /> 性格特质</h3>
+                  <div className="flex flex-wrap gap-2">{detailUser.personality_traits?.map((t:string) => <span key={t} className="px-3 py-1 bg-white border border-gray-200 rounded-full text-sm font-medium text-gray-700 shadow-sm">{t}</span>)}</div>
+                </section>
+                
+                <section>
+                  <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4 flex items-center gap-2"><Target className="w-4 h-4" /> 核心内在维度</h3>
+                  <div className="space-y-4">
+                    {Object.entries(detailUser.coreTraits || {}).map(([key, trait]: any) => (
+                      <div key={key} className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+                        <div className="text-sm font-bold text-indigo-600 mb-2">{trait.label}</div>
+                        <div className="text-sm text-gray-700 leading-relaxed">{trait.detail}</div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                <section>
+                  <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-4 flex items-center gap-2"><Settings className="w-4 h-4" /> 客观分布属性</h3>
+                  <div className="grid grid-cols-2 gap-4">
+                    {Object.entries(detailUser).map(([k, v]) => {
+                      if (['id', 'projectId', 'name', 'age', 'occupation', 'coreTraits', 'personality_traits'].includes(k)) return null;
+                      return (
+                        <div key={k} className="bg-white p-4 rounded-xl border border-gray-200 flex flex-col justify-center">
+                          <span className="text-[10px] text-gray-400 uppercase font-bold mb-1">{k}</span>
+                          <span className="text-sm font-medium text-gray-900">{String(v)}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              </div>
+              
+              <div className="p-6 border-t border-gray-100 bg-white flex justify-end gap-3 shrink-0">
+                <Button variant="secondary" onClick={() => setDetailUser(null)}>关闭画像</Button>
+                <Button onClick={() => { toggleUser(detailUser.id); setDetailUser(null); }} className="gap-2">
+                  {selectedUserIds.includes(detailUser.id) ? "取消选中" : "选中并加入访谈"} <CheckCircle2 className="w-4 h-4" />
+                </Button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 };
+
 const Chat = ({ project, users, participantIds, onBack, onGenerateReport }: any) => {
   const [messages, setMessages] = useState<any[]>([]);
   const [input, setInput] = useState('');
