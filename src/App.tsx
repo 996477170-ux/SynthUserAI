@@ -761,7 +761,9 @@ const Chat = ({ project, users, participantIds, onBack, onGenerateReport }: any)
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [conversationId, setConversationId] = useState('');
-  const [selectedImage, setSelectedImage] = useState<{ data: string; mimeType: string } | null>(null);
+  
+  // 🌟 升级1：把单个图片的状态，换成了图片数组
+  const [selectedImages, setSelectedImages] = useState<{ data: string; mimeType: string }[]>([]);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   const participants = users.filter((u: any) => participantIds.includes(u.id));
@@ -772,11 +774,7 @@ const Chat = ({ project, users, participantIds, onBack, onGenerateReport }: any)
       const res = await fetch('/api/conversations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          projectId: project.id, 
-          type: isFocusGroup ? 'focus_group' : 'one_on_one',
-          participantIds 
-        }),
+        body: JSON.stringify({ projectId: project.id, type: isFocusGroup ? 'focus_group' : 'one_on_one', participantIds }),
       });
       const conv = await res.json();
       setConversationId(conv.id);
@@ -784,29 +782,39 @@ const Chat = ({ project, users, participantIds, onBack, onGenerateReport }: any)
     initChat();
   }, []);
 
+  // 🌟 升级2：处理多文件上传
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
 
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      const base64 = event.target?.result as string;
-      const resizedBase64 = await resizeImage(base64);
-      const data = resizedBase64.split(',')[1];
-      setSelectedImage({ data, mimeType: 'image/jpeg' });
-    };
-    reader.readAsDataURL(file);
+    files.forEach(file => {
+      const reader = new FileReader();
+      reader.onload = async (event) => {
+        const base64 = event.target?.result as string;
+        const resizedBase64 = await resizeImage(base64);
+        const data = resizedBase64.split(',')[1];
+        setSelectedImages(prev => [...prev, { data, mimeType: file.type || 'image/jpeg' }]);
+      };
+      reader.readAsDataURL(file);
+    });
+    // 清空 input，允许重复选同一张图
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  // 🌟 升级3：删除指定的预览图
+  const removeImage = (index: number) => {
+    setSelectedImages(prev => prev.filter((_, i) => i !== index));
   };
 
   const handleSend = async () => {
-    if ((!input.trim() && !selectedImage) || loading) return;
+    if ((!input.trim() && selectedImages.length === 0) || loading) return;
     
+    // 🌟 升级4：将多图装包发给服务器 (使用 imageUrls 数组)
     const userMsg = {
       conversationId,
       senderType: 'user',
       content: input,
-      imageUrl: selectedImage ? `data:${selectedImage.mimeType};base64,${selectedImage.data}` : undefined,
-      mimeType: selectedImage?.mimeType,
+      imageUrls: selectedImages.length > 0 ? selectedImages.map(img => `data:${img.mimeType};base64,${img.data}`) : undefined,
     };
 
     const res = await fetch('/api/messages', {
@@ -817,20 +825,23 @@ const Chat = ({ project, users, participantIds, onBack, onGenerateReport }: any)
     const savedUserMsg = await res.json();
     const updatedMessages = [...messages, savedUserMsg];
     setMessages(updatedMessages);
+    
+    // 清空输入框和图片
     setInput('');
-    const currentImage = selectedImage;
-    setSelectedImage(null);
+    const imagesToSend = [...selectedImages];
+    setSelectedImages([]);
     setLoading(true);
 
     try {
       let currentHistory = updatedMessages;
       for (const participant of participants) {
-        // 添加一点延迟，让焦点小组有真实的交替回复感，也防止请求过快
         if (isFocusGroup && currentHistory.length > updatedMessages.length) {
             await new Promise(resolve => setTimeout(resolve, 800)); 
         }
 
-        const aiResponse = await chatWithUser(participant, currentHistory, input, project, [], currentImage || undefined);
+        // 把包含多图的数组扔给大模型
+        const aiResponse = await chatWithUser(participant, currentHistory, input, project, [], imagesToSend);
+        
         const aiMsg = {
           conversationId,
           senderType: 'synthetic_user',
@@ -859,19 +870,13 @@ const Chat = ({ project, users, participantIds, onBack, onGenerateReport }: any)
     <div className="h-screen flex flex-col bg-gray-50">
       <header className="bg-white border-b border-gray-200 px-6 py-4 flex justify-between items-center shrink-0">
         <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={onBack}>
-            <ArrowLeft className="w-5 h-5" />
-          </Button>
+          <Button variant="ghost" size="icon" onClick={onBack}><ArrowLeft className="w-5 h-5" /></Button>
           <div>
-            <h2 className="font-bold text-gray-900">
-              {isFocusGroup ? '焦点小组讨论' : `与 ${participants[0]?.name || 'AI用户'} 的深度访谈`}
-            </h2>
+            <h2 className="font-bold text-gray-900">{isFocusGroup ? '焦点小组讨论' : `与 ${participants[0]?.name || 'AI用户'} 的深度访谈`}</h2>
             <p className="text-xs text-gray-500 truncate max-w-[300px]">{project.shortTitle || project.purpose}</p>
           </div>
         </div>
-        <Button variant="primary" size="sm" onClick={() => onGenerateReport(messages)}>
-          生成研究报告
-        </Button>
+        <Button variant="primary" size="sm" onClick={() => onGenerateReport(messages)}>生成研究报告</Button>
       </header>
 
       <div className="flex-1 overflow-y-auto p-6 space-y-6">
@@ -887,21 +892,20 @@ const Chat = ({ project, users, participantIds, onBack, onGenerateReport }: any)
                     {participant?.name[0] || 'A'}
                   </div>
                 )}
-                <div className={cn(
-                  'max-w-[80%] p-4 rounded-2xl shadow-sm',
-                  isUser ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-white text-gray-800 border border-gray-200 rounded-tl-none'
-                )}>
-                  {!isUser && isFocusGroup && (
-                    <div className="text-[10px] font-bold text-indigo-600 uppercase mb-1">{participant?.name}</div>
+                <div className={cn('max-w-[80%] p-4 rounded-2xl shadow-sm', isUser ? 'bg-indigo-600 text-white rounded-tr-none' : 'bg-white text-gray-800 border border-gray-200 rounded-tl-none')}>
+                  {!isUser && isFocusGroup && <div className="text-[10px] font-bold text-indigo-600 uppercase mb-1">{participant?.name}</div>}
+                  
+                  {/* 🌟 升级5：渲染聊天气泡里的多张图片，也兼容旧版的单图 */}
+                  {msg.imageUrls ? (
+                    <div className="flex flex-wrap gap-2 mb-2">
+                      {msg.imageUrls.map((url: string, i: number) => (
+                        <img key={i} src={url} alt="Uploaded content" className="max-h-60 rounded-lg border border-white/20" referrerPolicy="no-referrer" />
+                      ))}
+                    </div>
+                  ) : msg.imageUrl ? (
+                    <img src={msg.imageUrl} alt="Uploaded content" className="max-w-full rounded-lg mb-2 border border-white/20" referrerPolicy="no-referrer" />
                   )}
-                  {msg.imageUrl && (
-                    <img 
-                      src={msg.imageUrl} 
-                      alt="Uploaded content" 
-                      className="max-w-full rounded-lg mb-2 border border-white/20" 
-                      referrerPolicy="no-referrer"
-                    />
-                  )}
+                  
                   <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.content}</p>
                 </div>
               </div>
@@ -909,12 +913,8 @@ const Chat = ({ project, users, participantIds, onBack, onGenerateReport }: any)
           })}
           {loading && (
             <div className="flex gap-4">
-              <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center text-gray-400 shrink-0">
-                <Bot className="w-5 h-5 animate-pulse" />
-              </div>
-              <div className="bg-white border border-gray-200 p-4 rounded-2xl rounded-tl-none shadow-sm">
-                <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
-              </div>
+              <div className="w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center text-gray-400 shrink-0"><Bot className="w-5 h-5 animate-pulse" /></div>
+              <div className="bg-white border border-gray-200 p-4 rounded-2xl rounded-tl-none shadow-sm"><Loader2 className="w-4 h-4 animate-spin text-gray-400" /></div>
             </div>
           )}
         </div>
@@ -922,48 +922,25 @@ const Chat = ({ project, users, participantIds, onBack, onGenerateReport }: any)
 
       <div className="bg-white border-t border-gray-200 p-6 shrink-0">
         <div className="max-w-4xl mx-auto">
-          {selectedImage && (
-            <div className="mb-4 relative inline-block">
-              <img 
-                src={`data:${selectedImage.mimeType};base64,${selectedImage.data}`} 
-                alt="Preview" 
-                className="h-20 w-20 object-cover rounded-lg border-2 border-indigo-500" 
-                referrerPolicy="no-referrer"
-              />
-              <button 
-                onClick={() => setSelectedImage(null)}
-                className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 shadow-lg hover:bg-red-600 transition-colors"
-              >
-                <Trash2 className="w-3 h-3" />
-              </button>
+          {/* 🌟 升级6：输入框上方的多图预览区 */}
+          {selectedImages.length > 0 && (
+            <div className="mb-4 flex flex-wrap gap-3">
+              {selectedImages.map((img, index) => (
+                <div key={index} className="relative inline-block">
+                  <img src={`data:${img.mimeType};base64,${img.data}`} alt="Preview" className="h-20 w-20 object-cover rounded-lg border-2 border-indigo-500" />
+                  <button onClick={() => removeImage(index)} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 shadow-lg hover:bg-red-600 transition-colors">
+                    <Trash2 className="w-3 h-3" />
+                  </button>
+                </div>
+              ))}
             </div>
           )}
           <div className="flex gap-4">
-            <input 
-              type="file" 
-              ref={fileInputRef} 
-              className="hidden" 
-              accept="image/*" 
-              onChange={handleImageUpload} 
-            />
-            <Button 
-              variant="ghost" 
-              size="icon" 
-              className="shrink-0"
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <ImageIcon className="w-5 h-5" />
-            </Button>
-            <input
-              className="flex-1 bg-gray-50 border border-gray-200 rounded-xl px-4 py-2 outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
-              placeholder={selectedImage ? "描述图片或提问..." : "输入您的问题..."}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-            />
-            <Button size="icon" disabled={loading || (!input.trim() && !selectedImage)} onClick={handleSend}>
-              <Send className="w-5 h-5" />
-            </Button>
+            {/* 🌟 升级7：加了 multiple 属性允许系统选多图 */}
+            <input type="file" ref={fileInputRef} className="hidden" accept="image/*" multiple onChange={handleImageUpload} />
+            <Button variant="ghost" size="icon" className="shrink-0" onClick={() => fileInputRef.current?.click()}><ImageIcon className="w-5 h-5" /></Button>
+            <input className="flex-1 bg-gray-50 border border-gray-200 rounded-xl px-4 py-2 outline-none focus:ring-2 focus:ring-indigo-500 transition-all" placeholder={selectedImages.length > 0 ? `已选 ${selectedImages.length} 张图片...` : "输入您的问题..."} value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleSend()} />
+            <Button size="icon" disabled={loading || (!input.trim() && selectedImages.length === 0)} onClick={handleSend}><Send className="w-5 h-5" /></Button>
           </div>
         </div>
       </div>
