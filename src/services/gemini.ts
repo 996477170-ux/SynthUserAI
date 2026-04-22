@@ -37,29 +37,53 @@ const fetchDynamicKnowledge = async (query: string) => {
 };
 
 export const decomposeGoals = async (purpose: string) => {
-  const prompt = `你是一个资深用户研究专家。请根据【研究目的】，拆解出3个专业的研究目标。
+  const prompt = `你是一个资深用户研究专家。请根据【研究目的】，拆解出3个专业的研究目标，并推测本次研究最可能涉及的3-4个具体目标群体身份（如租客、房东、企业HR、求职者、外卖员等）。
   研究目的：${purpose}
-  必须返回合法JSON：{"shortTitle": "项目简称（10字内）", "goals": [{"id": "g1", "content": "具体目标"}], "suggestedDimensions": [{"id": "motivation", "name": "核心变量", "desc": "解释"}]}`;
+  必须返回合法JSON：
+  {
+    "shortTitle": "项目简称（10字内）", 
+    "goals": [{"id": "g1", "content": "具体目标"}], 
+    "suggestedDimensions": [{"id": "motivation", "name": "核心变量", "desc": "解释"}],
+    "suggestedRoles": ["推测身份1", "推测身份2"]
+  }`;
   return await callAI([{ role: 'user', content: prompt }], true);
 };
 
 export const generateSyntheticUsers = async (projectId: string, purpose: string, goals: any[], config: any, _unusedKnowledge: any[]) => {
   const realKnowledge = await fetchDynamicKnowledge(purpose);
 
+  // 🌟 核心修复1：捕获身份配置
+  const roleConstraint = (config.selectedRoles && config.selectedRoles.length > 0) 
+    ? `【强制身份限制】：必须严格从以下用户勾选的身份中分配职业：${config.selectedRoles.join(', ')}。` 
+    : `【身份定位】：仔细分析【研究目的】，如果是企业端/商家则生成B端人设；如果是消费者/租客则生成C端人设。`;
+
+  // 🌟 核心修复2：捕获【核心变量（主观维度）】
+  const coreVars = config.subjectiveDimensions?.join(', ') || '动机偏好';
+  
+  // 🌟 核心修复3：捕获【客观变量（人口统计学）】
+  let objectiveVarsStr = "";
+  if (config.ageRange) objectiveVarsStr += `- 年龄范围限制在：${config.ageRange.min}到${config.ageRange.max}岁之间；\n`;
+  if (config.genderRatio !== undefined) objectiveVarsStr += `- 性别比例尽量遵循：男性约${config.genderRatio}%，女性约${100-config.genderRatio}%；\n`;
+  if (config.cityTierRange && config.cityTierRange.length > 0) objectiveVarsStr += `- 城市线级限定在：${config.cityTierRange.join(', ')}；\n`;
+  if (config.incomeRange) objectiveVarsStr += `- 月收入限定在：${config.incomeRange.min}到${config.incomeRange.max}元之间；\n`;
+  if (config.customObjectiveVariables) objectiveVarsStr += `- 其他用户自定义强制要求：${config.customObjectiveVariables}；\n`;
+
   const prompt = `你是一个高仿真用户生成器。你需要根据【研究目的】生成 ${config.userCount || 4} 个虚拟访谈用户。
 
-  【核心分析与生成规则】：
-  1. 身份定位：仔细分析【研究目的】，如果是招聘企业端、黄页商家、房产中介，必须生成 B端（老板、HR、店长等）人设；如果是求职者、租客、借款人，必须生成 C端（普通网民、学生、白领等）人设。
-  2. 58业务补全：如果缺乏背景，请自动基于你的常识，补全该场景在 58同城/58金融/58到家/赶集网 等相关产品中的真实使用痛点。
-  3. 绝对差异化：生成的这几个用户，必须代表**完全不同的痛点角度**！绝不能同质化！
+  【核心生成规则】：
+  1. ${roleConstraint}
+  2. 🌟 核心差异化（极度重要）：这几个用户的本质差异，必须严格体现在用户选定的核心变量【${coreVars}】上！请确保他们在这个维度上有截然不同的行为倾向（例如同为租客，有人价格敏感，有人体验优先）。
+  3. 🌟 客观条件限制：生成的人物，其年龄、性别、收入等客观属性，必须严格符合以下群体分布条件：
+  ${objectiveVarsStr || '无特殊限制，请合理随机分配。'}
+  4. 结合内部痛点：参考以下内部资料，将他们的核心痛点变得极具真实场景感。
   
   【内部资料参考】：
-  ${realKnowledge}
+  ${realKnowledge || "暂无内部资料，请依靠行业常识推演"}
 
   【研究目的】：${purpose}
 
-  必须返回合法JSON数组，要求 detail 字段极具场景感：
-  [{"name": "李雷", "age": 35, "occupation": "餐饮店老板", "coreTraits": { "motivation": { "label": "获客成本敏感", "detail": "具体场景和痛点" } }, "personality_traits": ["精打细算", "急性子"]}]`;
+  必须返回合法JSON数组（注意 coreTraits 里的 key 必须是前面要求区分的那个核心变量）：
+  [{"name": "李雷", "age": 35, "occupation": "餐饮店老板", "coreTraits": { "你区分的那个核心变量名称（如决策风格）": { "label": "感性直觉型", "detail": "结合了资料的真实场景痛点描述" } }, "personality_traits": ["精打细算", "急性子"]}]`;
   
   return await callAI([{ role: 'user', content: prompt }], true);
 };
@@ -67,7 +91,6 @@ export const generateSyntheticUsers = async (projectId: string, purpose: string,
 export const chatWithUser = async (participant: any, history: any[], input: string, project: any, _unusedKnowledge: any[], image: any) => {
   const realKnowledge = await fetchDynamicKnowledge(project.purpose + " " + input);
 
-  // 🌟 核心修复：动态雷达，判断当前是 1V1 还是多人焦点小组
   const otherAI_Messages = history.filter((m: any) => m.senderType === 'synthetic_user' && m.syntheticUserId !== participant.id);
   const isFocusGroup = otherAI_Messages.length > 0;
 
@@ -88,7 +111,7 @@ export const chatWithUser = async (participant: any, history: any[], input: stri
 【你的人设】
 姓名：${participant.name}，年龄：${participant.age}岁，职业：${participant.occupation}。
 性格与特质：${participant.personality_traits?.join(',')}。
-你的核心诉求：${participant.coreTraits?.motivation?.detail || '暂无'}
+你的核心诉求：${Object.values(participant.coreTraits || {}).map((t:any) => t.detail).join('; ') || '暂无'}
 
 【访谈背景】
 本次访谈主题：${project.purpose}。请自动代入“58同城”及其旗下业务的真实使用场景。
@@ -123,8 +146,24 @@ ${chatModeRules}` }
 };
 
 export const generateReport = async (project: any, users: any[], messages: any[]) => {
-  const prompt = `你是一个资深产品研究员。请分析这组访谈记录，生成专业的研究报告。研究目的：${project.purpose}。
+  const chatLog = messages.map(m => {
+    const sender = m.senderType === 'user' ? '研究员(我)' : (users.find(u => u.id === m.syntheticUserId)?.name || '受访用户');
+    return `${sender}: ${m.content}`;
+  }).join('\n\n');
+
+  const prompt = `你是一个严谨客观的资深产品研究员。请**严格且仅根据**下方的【真实访谈聊天记录】，生成一份专业的研究报告。
+
+  【绝对红线（违反必受罚）】：
+  1. 绝不能凭空捏造痛点，不能自行发挥！如果你在记录里没看到的内容，绝对不允许写进报告！
+  2. 所有的 evidence（证据）和 userQuotes（原话）必须 100% 复制下方聊天记录里用户说的原话，一字不差！
+
+  研究目的：${project.purpose}。
+
+  【真实访谈聊天记录】：
+  ${chatLog || "暂无记录"}
+
   必须返回合法JSON格式：
-  {"summary": "一句话总结", "insights": [{"category": "体验洞察", "content": "深入洞察", "evidence": "原话"}], "painPoints": [{"description": "痛点描述", "severity": "high", "frequency": "高", "userQuotes": ["原话"]}], "recommendations": [{"action": "建议", "impact": "预期", "effort": "中"}]}`;
+  {"summary": "一句话总结痛点", "insights": [{"category": "体验洞察", "content": "必须依据记录提取的洞察", "evidence": "照抄记录里的原话"}], "painPoints": [{"description": "痛点描述", "severity": "high", "frequency": "高", "userQuotes": ["照抄原话"]}], "recommendations": [{"action": "优化建议", "impact": "预期", "effort": "中"}]}`;
+  
   return await callAI([{ role: 'user', content: prompt }], true);
 };
