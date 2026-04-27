@@ -18,12 +18,8 @@ async function startServer() {
   let conversations: any[] = [];
   let messages: any[] = [];
 
-  // =====================================================================
-  // 🌟 修复点：把前端需要的旧版知识库接口补回来，防止前端报错
-  // =====================================================================
   app.get("/api/knowledge", (req, res) => res.json([]));
 
-  // 基础 API
   app.get("/api/projects", (req, res) => res.json(projects));
   app.post("/api/projects", (req, res) => { const project = { ...req.body, id: Math.random().toString(36).substr(2, 9), createdAt: new Date().toISOString() }; projects.push(project); res.json(project); });
   app.get("/api/projects/:id", (req, res) => res.json(projects.find(p => p.id === req.params.id) || {}));
@@ -35,40 +31,83 @@ async function startServer() {
   app.post("/api/conversations", (req, res) => { const conv = { ...req.body, id: Math.random().toString(36).substr(2, 9), createdAt: new Date().toISOString() }; conversations.push(conv); res.json(conv); });
 
   // =====================================================================
-  // 🌟 智库搜索通道 (加入了严格的清洗过滤机制)
+  // 🌟 终极智库通道：接入 Coze (扣子) V3 官方 API
   // =====================================================================
   app.post("/api/search-kb", async (req, res) => {
     try {
       const { query } = req.body;
-      const uxApiKey = process.env.UX_KNOWLEDGE_KEY;
-      if (!uxApiKey) return res.json({ result: "" }); // 没有 key 就返回空，不传报错
+      const cozeApiKey = process.env.COZE_API_KEY;
+      const botId = "7632221259367333922"; // 你的 Coze Bot ID
 
-      const response = await fetch("http://152.136.139.107/api/search/summary", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-API-Key": uxApiKey },
+      if (!cozeApiKey) {
+        console.warn("未配置 COZE_API_KEY，跳过智库检索");
+        return res.json({ result: "" });
+      }
+
+      // 1. 向 Coze 发起对话请求
+      const chatRes = await fetch('https://api.coze.cn/v3/chat', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${cozeApiKey}`,
+          'Content-Type': 'application/json'
+        },
         body: JSON.stringify({
-          query: query,
-          top_k: 3,
-          filters: { source_types: ["微信文章", "用研报告"] },
-          use_vector: true,
-          readable: true
+          bot_id: botId,
+          user_id: "synthuser_system",
+          stream: false,
+          auto_save_history: false,
+          additional_messages: [{
+            role: "user",
+            content: `请检索你的知识库，提取与此相关的核心痛点和真实用户抱怨：${query}`,
+            content_type: "text"
+          }]
         })
       });
 
-      const data = await response.json();
-      
-      // 🌟 核心拦截：如果接口返回了 error 或者没搜到东西，绝对不要传给 AI！
-      if (data.error || !data.data) {
-        return res.json({ result: "" }); 
+      const chatData = await chatRes.json();
+      if (chatData.code !== 0) throw new Error(chatData.msg || "Coze Chat API 失败");
+
+      const chatId = chatData.data.id;
+      const conversationId = chatData.data.conversation_id;
+
+      // 2. 轮询等待 Coze 思考完成（Coze V3 API 必须的步骤）
+      let isCompleted = false;
+      let attempts = 0;
+      while (!isCompleted && attempts < 20) { // 最多等 20 秒
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        const statusRes = await fetch(`https://api.coze.cn/v3/chat/retrieve?chat_id=${chatId}&conversation_id=${conversationId}`, {
+          headers: { 'Authorization': `Bearer ${cozeApiKey}` }
+        });
+        const statusData = await statusRes.json();
+        
+        if (statusData.data.status === 'completed') {
+          isCompleted = true;
+        } else if (statusData.data.status === 'failed' || statusData.data.status === 'canceled') {
+          throw new Error("Coze 检索失败");
+        }
+        attempts++;
       }
-      res.json({ result: JSON.stringify(data.data) }); // 只把真正的数据 data 传过去
+
+      // 3. 去 Coze 拿最终生成的知识库回复
+      const msgRes = await fetch(`https://api.coze.cn/v3/chat/message/list?chat_id=${chatId}&conversation_id=${conversationId}`, {
+        headers: { 'Authorization': `Bearer ${cozeApiKey}` }
+      });
+      const msgData = await msgRes.json();
+      
+      // 提取助手的回答
+      const assistantMessage = msgData.data.find((m: any) => m.role === 'assistant' && m.type === 'answer');
+      const resultText = assistantMessage ? assistantMessage.content : "";
+
+      res.json({ result: resultText });
 
     } catch (error) {
-      res.json({ result: "" }); // 哪怕网络断了，也返回空，绝不让 AI 看到代码报错
+      console.error("Coze 智库搜索失败:", error);
+      res.json({ result: "" }); // 如果 Coze 挂了，静默失败，保证前端不崩溃
     }
   });
+
   // =====================================================================
-  // 🌟 硅基流动大模型通道
+  // 🌟 硅基流动大模型通道 (保持不变)
   // =====================================================================
   app.post("/api/ai", async (req, res) => {
     try {
